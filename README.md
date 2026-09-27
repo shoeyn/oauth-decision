@@ -393,11 +393,20 @@ The engine protects passwords, OTP codes, and client secrets from leaking to log
   ```
 
 ### 3. Built-In Security Guarantees
+* **Safe Input Scoping (CWE-915 Defense)**: Untrusted form submissions (`Event.submit(payload)`) only merge declared JSON Schema properties, preventing hostile payload parameters from overwriting server-set context keys (`userId`, `roles`, `riskScore`).
+* **Attempt Limiting & Brute-Force Defense**: Interactive challenge states (`maxAttempts: 3`) track attempt counts and automatically branch to `onError` or yield terminal `DENIED`.
 * **Path Traversal Protection (CWE-22)**: File includes containing directory traversal sequences (`..`) or protocol schemes (`://`) are rejected with a `SecurityException`.
 * **Circular Include Protection (CWE-674)**: Recursive includes (`flowA -> flowB -> flowA`) are detected during parse time to prevent `StackOverflowError` DoS attacks.
 * **Infinite Loop & Cycle Guard**: Decision loops without external human checkpoints are halted safely after one cycle with an explicit `cycle_detected` checkpoint.
 * **Bounded Program Cache (CWE-400)**: The CEL compiler's compiled AST cache is capped at 1,000 entries to prevent memory exhaustion.
-* **Resilient CEL Guard Evaluation**: Conditions referencing missing properties safely evaluate to `false` rather than crashing the execution turn.
+* **Resilient CEL Guard Evaluation & Numeric Normalization**: Conditions referencing missing properties safely evaluate to `false`. Integers are normalized to 64-bit longs so comparisons (`riskScore < 50`) behave predictably.
+
+---
+
+## Enterprise Integrations
+
+* **[Spring Security OAuth 2.1 Integration Guide](docs/SPRING_SECURITY_INTEGRATION_GUIDE.md)**: Production-grade guide for integrating with Spring Boot 4 / Spring Security 7 (PAR, DPoP, JARM, Redis session, and Rails IdP).
+* **[Architecture & Extension Points](docs/ARCHITECTURE_AND_EXTENSION_POINTS.md)**: Deep dive into the `CommandRegistry`, `FlowStateRepository`, and expression engine.
 
 ---
 

@@ -69,17 +69,38 @@ public class CelExpressionEvaluator {
             });
 
             Map<String, Object> safeBindings = new HashMap<>();
-            safeBindings.put("context", bindings.getOrDefault("context", Collections.emptyMap()));
-            safeBindings.put("results", bindings.getOrDefault("results", Collections.emptyMap()));
-            safeBindings.put("input", bindings.getOrDefault("input", Collections.emptyMap()));
-            safeBindings.put("event", bindings.getOrDefault("event", Collections.emptyMap()));
-            safeBindings.put("subflow", bindings.getOrDefault("subflow", Collections.emptyMap()));
+            safeBindings.put("context", normalizeNumbers(bindings.getOrDefault("context", Collections.emptyMap())));
+            safeBindings.put("results", normalizeNumbers(bindings.getOrDefault("results", Collections.emptyMap())));
+            safeBindings.put("input", normalizeNumbers(bindings.getOrDefault("input", Collections.emptyMap())));
+            safeBindings.put("event", normalizeNumbers(bindings.getOrDefault("event", Collections.emptyMap())));
+            safeBindings.put("subflow", normalizeNumbers(bindings.getOrDefault("subflow", Collections.emptyMap())));
             safeBindings.put("outcome", bindings.getOrDefault("outcome", ""));
 
             return program.eval(safeBindings);
         } catch (Exception e) {
             throw new RuntimeException("Error evaluating CEL expression [" + expression + "]: " + e.getMessage(), e);
         }
+    }
+
+    private Object normalizeNumbers(Object val) {
+        if (val instanceof Integer i) {
+            return Long.valueOf(i);
+        } else if (val instanceof Short s) {
+            return Long.valueOf(s);
+        } else if (val instanceof Byte b) {
+            return Long.valueOf(b);
+        } else if (val instanceof Map<?, ?> map) {
+            Map<String, Object> copy = new LinkedHashMap<>();
+            map.forEach((k, v) -> copy.put(String.valueOf(k), normalizeNumbers(v)));
+            return copy;
+        } else if (val instanceof List<?> list) {
+            List<Object> copy = new ArrayList<>(list.size());
+            for (Object item : list) {
+                copy.add(normalizeNumbers(item));
+            }
+            return copy;
+        }
+        return val;
     }
 
     public Object resolveTemplateValue(Object value, Map<String, Object> bindings) {

@@ -176,6 +176,12 @@ public class FlowParser {
                 }
             }
 
+            if (state.getOnError() != null && !state.getOnError().isBlank()) {
+                if (!flow.getStates().containsKey(state.getOnError())) {
+                    errors.add("State '" + state.getId() + "' specifies non-existent onError target: " + state.getOnError());
+                }
+            }
+
             for (TransitionDefinition transition : state.getTransitions()) {
                 if (transition.getTarget() == null || transition.getTarget().isBlank()) {
                     errors.add("Transition from state '" + state.getId() + "' has null or empty target");

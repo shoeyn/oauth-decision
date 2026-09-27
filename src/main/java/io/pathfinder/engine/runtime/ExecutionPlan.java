@@ -48,6 +48,10 @@ public class ExecutionPlan {
         return terminal;
     }
 
+    public TerminalResult getTerminalResult() {
+        return terminal;
+    }
+
     public SessionContext getUpdatedContext() {
         return updatedContext;
     }

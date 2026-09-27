@@ -4,7 +4,6 @@ import io.pathfinder.engine.model.FlowDefinition;
 import io.pathfinder.engine.parser.FlowParser;
 
 import java.io.File;
-import java.io.FilenameFilter;
 import java.util.Collection;
 import java.util.Optional;
 

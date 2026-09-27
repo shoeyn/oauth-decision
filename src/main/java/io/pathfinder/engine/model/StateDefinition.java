@@ -16,6 +16,8 @@ public class StateDefinition {
     private final TerminalConfig terminalConfig;
     private final List<TransitionDefinition> transitions;
     private final boolean forceCheckpoint;
+    private final String onError;
+    private final Integer maxAttempts;
 
     public StateDefinition(
             String id,
@@ -27,7 +29,21 @@ public class StateDefinition {
             TerminalConfig terminalConfig,
             List<TransitionDefinition> transitions,
             Boolean forceCheckpoint) {
-        this(id, type, singleCommand, commandList, singleSchema, schemaList, terminalConfig, transitions, forceCheckpoint, null);
+        this(id, type, singleCommand, commandList, singleSchema, schemaList, terminalConfig, transitions, forceCheckpoint, null, null, null);
+    }
+
+    public StateDefinition(
+            String id,
+            StateType type,
+            CommandDefinition singleCommand,
+            List<CommandDefinition> commandList,
+            FrontendSchemaDefinition singleSchema,
+            List<FrontendSchemaDefinition> schemaList,
+            TerminalConfig terminalConfig,
+            List<TransitionDefinition> transitions,
+            Boolean forceCheckpoint,
+            String subflow) {
+        this(id, type, singleCommand, commandList, singleSchema, schemaList, terminalConfig, transitions, forceCheckpoint, subflow, null, null);
     }
 
     @JsonCreator
@@ -41,9 +57,13 @@ public class StateDefinition {
             @JsonProperty("terminal") TerminalConfig terminalConfig,
             @JsonProperty("on") List<TransitionDefinition> transitions,
             @JsonProperty("checkpoint") Boolean forceCheckpoint,
-            @JsonProperty("subflow") String subflow) {
+            @JsonProperty("subflow") String subflow,
+            @JsonProperty("onError") String onError,
+            @JsonProperty("maxAttempts") Integer maxAttempts) {
         this.id = id;
         this.subflow = subflow;
+        this.onError = onError;
+        this.maxAttempts = maxAttempts;
         if (type != null) {
             this.type = type;
         } else if (subflow != null && !subflow.isBlank()) {
@@ -105,5 +125,13 @@ public class StateDefinition {
 
     public boolean isForceCheckpoint() {
         return forceCheckpoint;
+    }
+
+    public String getOnError() {
+        return onError;
+    }
+
+    public Integer getMaxAttempts() {
+        return maxAttempts;
     }
 }

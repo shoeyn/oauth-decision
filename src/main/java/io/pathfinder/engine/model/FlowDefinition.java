@@ -42,7 +42,7 @@ public class FlowDefinition {
                 // Ensure state id is populated even if not in the state object itself
                 StateDefinition populated = v.getId() == null
                         ? new StateDefinition(k, v.getType(), null, v.getBackendCommands(),
-                        null, v.getFrontendSchemas(), v.getTerminalConfig(), v.getTransitions(), v.isForceCheckpoint(), v.getSubflow())
+                        null, v.getFrontendSchemas(), v.getTerminalConfig(), v.getTransitions(), v.isForceCheckpoint(), v.getSubflow(), v.getOnError(), v.getMaxAttempts())
                         : v;
                 copy.put(k, populated);
             });

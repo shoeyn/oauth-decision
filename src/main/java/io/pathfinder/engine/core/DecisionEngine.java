@@ -78,7 +78,31 @@ public class DecisionEngine {
             throw new IllegalArgumentException("Unknown state in flow '" + activeFlow.getId() + "': " + currentStateId);
         }
 
-        // 2. If this is a SUBMIT event from a frontend step, validate input against JSON Schema first
+        // 2. Check attempt limits for interactive turns
+        if (!isInitialTurn && currentState.getMaxAttempts() != null && currentState.getMaxAttempts() > 0) {
+            if (Event.TYPE_SUBMIT.equalsIgnoreCase(activeEvent.getType()) || Event.TYPE_RESUME.equalsIgnoreCase(activeEvent.getType())) {
+                activeContext = activeContext.withIncrementedAttempt(currentStateId);
+                int currentAttempts = activeContext.getAttemptCount(currentStateId);
+                if (currentAttempts > currentState.getMaxAttempts()) {
+                    if (currentState.getOnError() != null && !currentState.getOnError().isBlank()) {
+                        currentStateId = currentState.getOnError();
+                        activeContext = activeContext.withBreadcrumb(currentStateId);
+                        currentState = activeFlow.getState(currentStateId);
+                        if (currentState == null) {
+                            throw new IllegalStateException("onError target state does not exist: " + currentStateId);
+                        }
+                    } else {
+                        return ExecutionPlan.builder()
+                                .currentState(currentStateId)
+                                .terminal(new TerminalResult("DENIED", Collections.emptyMap(), "Maximum attempts exceeded for state: " + currentStateId))
+                                .updatedContext(activeContext)
+                                .build();
+                    }
+                }
+            }
+        }
+
+        // 3. If this is a SUBMIT event from a frontend step, validate input against JSON Schema first
         if (Event.TYPE_SUBMIT.equalsIgnoreCase(activeEvent.getType()) && !currentState.getFrontendSchemas().isEmpty()) {
             for (FrontendSchemaDefinition schemaDef : currentState.getFrontendSchemas()) {
                 if (schemaDef.getJsonSchema() != null) {
@@ -101,22 +125,40 @@ public class DecisionEngine {
                     }
                 }
             }
-            // If validated, merge submitted input into shared context
-            activeContext = activeContext.withAll(activeEvent.getPayload());
+            // Always preserve submitted input under input namespace
+            activeContext = activeContext.withInput(activeEvent.getPayload());
+
+            // Security Hardening: Only merge declared schema properties into context.
+            // Untrusted extra properties are filtered out, and pre-existing context keys CANNOT be overwritten!
+            Set<String> declaredProperties = extractDeclaredProperties(currentState.getFrontendSchemas());
+            Map<String, Object> safeUpdates = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : activeEvent.getPayload().entrySet()) {
+                String key = entry.getKey();
+                if (declaredProperties.isEmpty() || declaredProperties.contains(key)) {
+                    // Do not permit untrusted submit payloads to overwrite existing context keys
+                    if (!activeContext.getData().containsKey(key)) {
+                        safeUpdates.put(key, entry.getValue());
+                    }
+                }
+            }
+            if (!safeUpdates.isEmpty()) {
+                activeContext = activeContext.withAll(safeUpdates);
+            }
         }
 
-        // 3. Build evaluation bindings
+        // 4. Build evaluation bindings
         Map<String, Object> bindings = new HashMap<>();
         bindings.put("context", activeContext.getData());
         bindings.put("event", activeEvent.getPayload());
         if (Event.TYPE_RESUME.equalsIgnoreCase(activeEvent.getType())) {
             bindings.put("results", activeEvent.getPayload());
+            bindings.put("input", activeContext.getInput());
         } else if (Event.TYPE_SUBMIT.equalsIgnoreCase(activeEvent.getType())) {
             bindings.put("input", activeEvent.getPayload());
             bindings.put("results", Collections.emptyMap());
         } else {
             bindings.put("results", Collections.emptyMap());
-            bindings.put("input", Collections.emptyMap());
+            bindings.put("input", activeContext.getInput());
         }
 
         // 4. If we are resuming or submitting on an existing state, evaluate its transition first
@@ -363,5 +405,19 @@ public class DecisionEngine {
             current = current.withValue(entry.getKey(), evaluated);
         }
         return current;
+    }
+
+    private Set<String> extractDeclaredProperties(List<FrontendSchemaDefinition> schemas) {
+        Set<String> declared = new HashSet<>();
+        if (schemas == null) return declared;
+        for (FrontendSchemaDefinition schemaDef : schemas) {
+            if (schemaDef.getJsonSchema() != null && schemaDef.getJsonSchema().has("properties")) {
+                tools.jackson.databind.JsonNode propertiesNode = schemaDef.getJsonSchema().get("properties");
+                if (propertiesNode != null && propertiesNode.isObject()) {
+                    declared.addAll(propertiesNode.propertyNames());
+                }
+            }
+        }
+        return declared;
     }
 }
