@@ -8,16 +8,14 @@ import dev.cel.parser.CelStandardMacro;
 import dev.cel.runtime.CelRuntime;
 import dev.cel.runtime.CelRuntimeFactory;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class CelExpressionEvaluator {
     private static final Pattern TEMPLATE_PATTERN = Pattern.compile("\\$\\{([^}]+)\\}");
+    private static final int MAX_CACHE_ENTRIES = 1000;
 
     private final CelCompiler compiler;
     private final CelRuntime runtime;
@@ -30,6 +28,8 @@ public class CelExpressionEvaluator {
                 .addVar("results", SimpleType.DYN)
                 .addVar("input", SimpleType.DYN)
                 .addVar("event", SimpleType.DYN)
+                .addVar("subflow", SimpleType.DYN)
+                .addVar("outcome", SimpleType.DYN)
                 .build();
         this.runtime = CelRuntimeFactory.standardCelRuntimeBuilder().build();
     }
@@ -38,11 +38,16 @@ public class CelExpressionEvaluator {
         if (condition == null || condition.isBlank()) {
             return true;
         }
-        Object result = evaluate(condition, bindings);
-        if (result instanceof Boolean b) {
-            return b;
+        try {
+            Object result = evaluate(condition, bindings);
+            if (result instanceof Boolean b) {
+                return b;
+            }
+            return false;
+        } catch (Exception e) {
+            // Unresolved variables or evaluation errors evaluate gracefully to false
+            return false;
         }
-        return false;
     }
 
     public Object evaluate(String expression, Map<String, Object> bindings) {
@@ -50,6 +55,10 @@ public class CelExpressionEvaluator {
             return null;
         }
         try {
+            if (programCache.size() >= MAX_CACHE_ENTRIES) {
+                programCache.clear();
+            }
+
             CelRuntime.Program program = programCache.computeIfAbsent(expression, expr -> {
                 try {
                     CelAbstractSyntaxTree ast = compiler.compile(expr).getAst();
@@ -64,6 +73,8 @@ public class CelExpressionEvaluator {
             safeBindings.put("results", bindings.getOrDefault("results", Collections.emptyMap()));
             safeBindings.put("input", bindings.getOrDefault("input", Collections.emptyMap()));
             safeBindings.put("event", bindings.getOrDefault("event", Collections.emptyMap()));
+            safeBindings.put("subflow", bindings.getOrDefault("subflow", Collections.emptyMap()));
+            safeBindings.put("outcome", bindings.getOrDefault("outcome", ""));
 
             return program.eval(safeBindings);
         } catch (Exception e) {
@@ -75,11 +86,9 @@ public class CelExpressionEvaluator {
         if (value instanceof String str) {
             Matcher matcher = TEMPLATE_PATTERN.matcher(str);
             if (matcher.matches()) {
-                // Whole string is a single expression, return typed result
                 String expr = matcher.group(1).trim();
                 return evaluate(expr, bindings);
             } else if (matcher.find()) {
-                // String contains embedded expressions, interpolate as string
                 matcher.reset();
                 StringBuilder sb = new StringBuilder();
                 while (matcher.find()) {
@@ -92,8 +101,14 @@ public class CelExpressionEvaluator {
             }
             return str;
         } else if (value instanceof Map<?, ?> map) {
-            Map<String, Object> resolved = new HashMap<>();
+            Map<String, Object> resolved = new LinkedHashMap<>();
             map.forEach((k, v) -> resolved.put(String.valueOf(k), resolveTemplateValue(v, bindings)));
+            return resolved;
+        } else if (value instanceof List<?> list) {
+            List<Object> resolved = new ArrayList<>(list.size());
+            for (Object item : list) {
+                resolved.add(resolveTemplateValue(item, bindings));
+            }
             return resolved;
         }
         return value;

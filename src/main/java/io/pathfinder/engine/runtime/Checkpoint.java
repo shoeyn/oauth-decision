@@ -1,5 +1,8 @@
 package io.pathfinder.engine.runtime;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -26,7 +29,13 @@ public class Checkpoint {
         this(ACTION_COME_BACK, flowId, resumeState, expectedInputs, UUID.randomUUID().toString());
     }
 
-    public Checkpoint(String action, String flowId, String resumeState, List<String> expectedInputs, String correlationId) {
+    @JsonCreator
+    public Checkpoint(
+            @JsonProperty("action") String action,
+            @JsonProperty("flowId") String flowId,
+            @JsonProperty("resumeState") String resumeState,
+            @JsonProperty("expectedInputs") List<String> expectedInputs,
+            @JsonProperty("correlationId") String correlationId) {
         this.action = action != null ? action : ACTION_COME_BACK;
         this.flowId = flowId;
         this.resumeState = Objects.requireNonNull(resumeState, "resumeState must not be null");
@@ -52,5 +61,16 @@ public class Checkpoint {
 
     public String getCorrelationId() {
         return correlationId;
+    }
+
+    @Override
+    public String toString() {
+        return "Checkpoint{" +
+                "action='" + action + '\'' +
+                ", flowId='" + flowId + '\'' +
+                ", resumeState='" + resumeState + '\'' +
+                ", expectedInputs=" + expectedInputs +
+                ", correlationId='" + correlationId + '\'' +
+                '}';
     }
 }

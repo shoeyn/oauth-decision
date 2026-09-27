@@ -12,13 +12,14 @@ public class ExecutionPlan {
     private final TerminalResult terminal;
     private final SessionContext updatedContext;
 
+    @com.fasterxml.jackson.annotation.JsonCreator
     public ExecutionPlan(
-            String currentState,
-            List<BackendStep> backendSteps,
-            List<FrontendStep> frontendSteps,
-            Checkpoint checkpoint,
-            TerminalResult terminal,
-            SessionContext updatedContext) {
+            @com.fasterxml.jackson.annotation.JsonProperty("currentState") String currentState,
+            @com.fasterxml.jackson.annotation.JsonProperty("backendSteps") List<BackendStep> backendSteps,
+            @com.fasterxml.jackson.annotation.JsonProperty("frontendSteps") List<FrontendStep> frontendSteps,
+            @com.fasterxml.jackson.annotation.JsonProperty("checkpoint") Checkpoint checkpoint,
+            @com.fasterxml.jackson.annotation.JsonProperty("terminal") TerminalResult terminal,
+            @com.fasterxml.jackson.annotation.JsonProperty("updatedContext") SessionContext updatedContext) {
         this.currentState = currentState;
         this.backendSteps = backendSteps != null ? Collections.unmodifiableList(new ArrayList<>(backendSteps)) : Collections.emptyList();
         this.frontendSteps = frontendSteps != null ? Collections.unmodifiableList(new ArrayList<>(frontendSteps)) : Collections.emptyList();

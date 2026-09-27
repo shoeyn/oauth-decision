@@ -1,5 +1,8 @@
 package io.pathfinder.engine.runtime;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.Collections;
 import java.util.Map;
 
@@ -12,7 +15,11 @@ public class TerminalResult {
     private final Map<String, Object> claims;
     private final String error;
 
-    public TerminalResult(String status, Map<String, Object> claims, String error) {
+    @JsonCreator
+    public TerminalResult(
+            @JsonProperty("status") String status,
+            @JsonProperty("claims") Map<String, Object> claims,
+            @JsonProperty("error") String error) {
         this.status = status != null ? status : STATUS_SUCCESS;
         this.claims = claims != null ? Collections.unmodifiableMap(claims) : Collections.emptyMap();
         this.error = error;
@@ -40,5 +47,14 @@ public class TerminalResult {
 
     public boolean isSuccess() {
         return STATUS_SUCCESS.equalsIgnoreCase(status);
+    }
+
+    @Override
+    public String toString() {
+        return "TerminalResult{" +
+                "status='" + status + '\'' +
+                ", claims=" + claims +
+                ", error='" + error + '\'' +
+                '}';
     }
 }

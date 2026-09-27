@@ -19,9 +19,10 @@ class FlowParserTest {
 
     @Test
     void testParseValidYamlFile() {
-        InputStream is = getClass().getResourceAsStream("/flows/oauth_stepup_auth.yaml");
-        assertThat(is).isNotNull();
-
+        InputStream is = java.util.Objects.requireNonNull(
+                getClass().getResourceAsStream("/flows/oauth_stepup_auth.yaml"),
+                "Required test resource /flows/oauth_stepup_auth.yaml not found"
+        );
         FlowDefinition flow = parser.parseYaml(is);
 
         assertThat(flow.getId()).isEqualTo("oauth-stepup-auth");

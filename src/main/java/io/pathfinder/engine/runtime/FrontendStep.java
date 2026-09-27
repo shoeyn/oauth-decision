@@ -1,5 +1,7 @@
 package io.pathfinder.engine.runtime;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import tools.jackson.databind.JsonNode;
 
 import java.util.Collections;
@@ -13,13 +15,14 @@ public class FrontendStep {
     private final JsonNode uiSchema;
     private final List<String> validationErrors;
 
+    @JsonCreator
     public FrontendStep(
-            String screenId,
-            String title,
-            String description,
-            JsonNode jsonSchema,
-            JsonNode uiSchema,
-            List<String> validationErrors) {
+            @JsonProperty("screenId") String screenId,
+            @JsonProperty("title") String title,
+            @JsonProperty("description") String description,
+            @JsonProperty("jsonSchema") JsonNode jsonSchema,
+            @JsonProperty("uiSchema") JsonNode uiSchema,
+            @JsonProperty("validationErrors") List<String> validationErrors) {
         this.screenId = screenId;
         this.title = title;
         this.description = description;
@@ -54,5 +57,15 @@ public class FrontendStep {
 
     public boolean hasErrors() {
         return !validationErrors.isEmpty();
+    }
+
+    @Override
+    public String toString() {
+        return "FrontendStep{" +
+                "screenId='" + screenId + '\'' +
+                ", title='" + title + '\'' +
+                ", description='" + description + '\'' +
+                ", validationErrors=" + validationErrors +
+                '}';
     }
 }

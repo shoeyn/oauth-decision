@@ -19,8 +19,10 @@ class DecisionEngineSimulationTest {
     @BeforeEach
     void setUp() {
         FlowParser parser = new FlowParser();
-        InputStream is = getClass().getResourceAsStream("/flows/oauth_stepup_auth.yaml");
-        assertThat(is).isNotNull();
+        InputStream is = java.util.Objects.requireNonNull(
+                getClass().getResourceAsStream("/flows/oauth_stepup_auth.yaml"),
+                "Test flow resource /flows/oauth_stepup_auth.yaml not found"
+        );
         this.flow = parser.parseYaml(is);
         this.engine = new DecisionEngine();
     }
@@ -110,7 +112,7 @@ class DecisionEngineSimulationTest {
         assertThat(turn2Plan.getFrontendSteps()).hasSize(1);
         FrontendStep otpScreen = turn2Plan.getFrontendSteps().get(0);
         assertThat(otpScreen.getScreenId()).isEqualTo("otp_entry_screen");
-        assertThat(otpScreen.getJsonSchema()).isNotNull();
+        assertThat(otpScreen.getTitle()).isEqualTo("Two-Factor Verification Required");
         assertThat(otpScreen.getJsonSchema().get("properties").get("otpCode").get("pattern").asString()).isEqualTo("^[0-9]{6}$");
         assertThat(otpScreen.getUiSchema().get("otpCode").get("ui:widget").asString()).isEqualTo("otp");
 

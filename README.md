@@ -96,6 +96,78 @@ sequenceDiagram
 
 ---
 
+## Transition Evaluation, Fast-Pathing & Step Bypassing
+
+Every state defines an `on:` list of transition rules. Because the Decision Engine employs look-ahead compilation, **any bypassed step is completely skipped**—its backend commands are never dispatched and its frontend screens are never rendered.
+
+### Evaluation Namespaces
+
+Inside `if` conditions (evaluated via Google CEL), four distinct namespaces are available:
+
+| Namespace | Source | Example Use Case | Example CEL Expression |
+| :--- | :--- | :--- | :--- |
+| `results.<cmdId>.<field>` | Asynchronous backend command responses | Fast-pathing low-risk users or failing fast on fraud | `results.fraud_check.riskScore < 30` |
+| `input.<fieldName>` | User form submissions | Bypassing optional steps if the user clicks "Skip" | `input.action == 'SKIP'` |
+| `context.<variable>` | Shared session context | Skipping steps if device is trusted or IP is internal | `context.deviceTrusted == true` |
+| `outcome` / `subflow.<field>`| Completed subflow terminal status | Routing to success or fallback based on subflow result | `outcome: SUCCESS` or `subflow.status == 'SUCCESS'` |
+
+### Bypassing Patterns
+
+#### 1. Fast-Pathing (Happy Path Bypasses MFA)
+```yaml
+assess_risk:
+  type: BACKEND
+  commands:
+    - id: risk_engine
+      service: fraud-service
+      payload: { ip: "${context.ip}" }
+  on:
+    - if: "results.risk_engine.score < 25"
+      target: issue_tokens               # Bypasses all MFA steps entirely!
+    - default: true
+      target: require_mfa_challenge
+```
+
+#### 2. Failing Fast (Immediate Lockout)
+```yaml
+evaluate_credentials:
+  type: BACKEND
+  commands:
+    - id: verify_pwd
+      service: auth-service
+  on:
+    - if: "results.verify_pwd.accountLocked == true"
+      target: account_locked_screen      # Bypasses remaining checks, locks immediately
+    - default: true
+      target: check_second_factor
+```
+
+#### 3. User-Driven Opt-Out / Skip
+```yaml
+prompt_biometric_setup:
+  type: FRONTEND
+  schemas: [ ... ]
+  on:
+    - if: "input.choice == 'REMIND_LATER'"
+      target: dashboard_token            # Bypasses enrollment
+    - default: true
+      target: register_passkey_subflow
+```
+
+#### 4. Context Updates on Transition
+Transitions can also mutate the shared session context using CEL expressions via `contextUpdates`:
+```yaml
+on:
+  - if: "results.verify_code.valid == true"
+    target: issue_tokens
+    contextUpdates:
+      mfaVerified: "true"
+      authTime: "now()"
+      assuranceLevel: "'urn:auth:level2'"
+```
+
+---
+
 ## Flow Definition Examples
 
 ### 1. Main Flow Calling a Reusable Subflow (`main_login_flow.yaml`)
@@ -292,6 +364,48 @@ if ("SUCCESS".equals(outcome.getStatus())) {
     return oauthErrorResponse.deny(outcome.getError());
 }
 ```
+
+---
+
+## Stateless Session Persistence & Security
+
+### 1. Redis / Cookie JSON Roundtripping
+OAuth servers run over stateless HTTP. All runtime models ([SessionContext](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/SessionContext.java), [Checkpoint](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/Checkpoint.java), [ExecutionPlan](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/ExecutionPlan.java)) feature complete Jackson `@JsonCreator` and `@JsonProperty` decorators:
+
+```java
+// Persisting to Redis or encrypted cookie between turns:
+String sessionJson = objectMapper.writeValueAsString(plan.getUpdatedContext());
+String checkpointJson = objectMapper.writeValueAsString(plan.getCheckpoint());
+
+// Restoring on the next HTTP POST request:
+SessionContext session = objectMapper.readValue(sessionJson, SessionContext.class);
+Checkpoint checkpoint = objectMapper.readValue(checkpointJson, Checkpoint.class);
+```
+
+### 2. Sensitive Data Redaction & Logging Safety
+The engine protects passwords, OTP codes, and client secrets from leaking to log aggregators:
+
+* **Automatic Masking**: Fields matching common credential names (`password`, `otpCode`, `pin`, `secret`, `ssn`, `cvv`) are tracked as sensitive.
+* **Safe Log Output**: `sessionContext.toString()` and `sessionContext.toSafeMap()` automatically replace sensitive values with `"[REDACTED]"`. Backend commands still access raw credentials when dispatching to auth services.
+* **Explicit Data Scrubbing**: Once verification succeeds, credentials can be completely purged from the session dictionary:
+  ```java
+  SessionContext cleanSession = session.without("password", "otpCode");
+  ```
+
+### 3. Built-In Security Guarantees
+* **Path Traversal Protection (CWE-22)**: File includes containing directory traversal sequences (`..`) or protocol schemes (`://`) are rejected with a `SecurityException`.
+* **Circular Include Protection (CWE-674)**: Recursive includes (`flowA -> flowB -> flowA`) are detected during parse time to prevent `StackOverflowError` DoS attacks.
+* **Infinite Loop & Cycle Guard**: Decision loops without external human checkpoints are halted safely after one cycle with an explicit `cycle_detected` checkpoint.
+* **Bounded Program Cache (CWE-400)**: The CEL compiler's compiled AST cache is capped at 1,000 entries to prevent memory exhaustion.
+* **Resilient CEL Guard Evaluation**: Conditions referencing missing properties safely evaluate to `false` rather than crashing the execution turn.
+
+---
+
+## Server-Driven UI & Localization Pattern
+
+For multi-language applications (e.g. Rails / Ruby UI frontends):
+* **Emit Locale Keys**: Define schemas using translation keys (e.g. `title: "screens.otp.title"`, `description: "screens.otp.description"`).
+* **Client-Side Localization**: The frontend resolves text keys against its standard locale files (`en.yml`, `es.yml`) alongside any dynamic session attributes passed in the execution plan.
 
 ---
 
