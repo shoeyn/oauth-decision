@@ -1,0 +1,94 @@
+id: oauth-stepup-auth
+version: "1.0.0"
+name: "OAuth 2.0 Step-Up Authentication Flow"
+initialState: evaluate_auth
+
+states:
+  evaluate_auth:
+    type: BACKEND
+    commands:
+      - id: fetch_user_profile
+        service: user-directory
+        payload:
+          userId: "${context.userId}"
+      - id: check_device_risk
+        service: fraud-engine
+        payload:
+          ip: "${context.ip}"
+          deviceId: "${context.deviceId}"
+    on:
+      - if: "results.check_device_risk.riskScore < 30"
+        target: issue_basic_token
+        contextUpdates:
+          riskScore: "results.check_device_risk.riskScore"
+      - default: true
+        target: trigger_stepup_mfa
+        contextUpdates:
+          riskScore: "results.check_device_risk.riskScore"
+
+  trigger_stepup_mfa:
+    type: COMPOSITE
+    commands:
+      - id: send_otp_sms
+        service: notification-service
+        payload:
+          userId: "${context.userId}"
+          channel: "SMS"
+    schemas:
+      - screenId: otp_entry_screen
+        title: "Two-Factor Verification Required"
+        description: "A 6-digit verification code has been dispatched to your registered phone."
+        jsonSchema:
+          type: object
+          required:
+            - otpCode
+          properties:
+            otpCode:
+              type: string
+              pattern: "^[0-9]{6}$"
+              title: "6-Digit Security Code"
+        uiSchema:
+          otpCode:
+            "ui:widget": "otp"
+            "ui:placeholder": "123456"
+            "ui:autofocus": true
+    on:
+      - event: SUBMIT
+        target: verify_otp
+
+  verify_otp:
+    type: BACKEND
+    commands:
+      - id: verify_code
+        service: otp-service
+        payload:
+          code: "${context.otpCode}"
+    on:
+      - if: "results.verify_code.valid == true"
+        target: issue_stepup_token
+      - default: true
+        target: auth_failed
+
+  issue_basic_token:
+    type: TERMINAL
+    terminal:
+      status: SUCCESS
+      claims:
+        sub: "${context.userId}"
+        acr: "urn:pathfinder:auth:level1"
+        amr: ["pwd"]
+
+  issue_stepup_token:
+    type: TERMINAL
+    terminal:
+      status: SUCCESS
+      claims:
+        sub: "${context.userId}"
+        acr: "urn:pathfinder:auth:level2"
+        amr: ["pwd", "otp"]
+
+  auth_failed:
+    type: TERMINAL
+    terminal:
+      status: DENIED
+      error: "Invalid verification code provided."
