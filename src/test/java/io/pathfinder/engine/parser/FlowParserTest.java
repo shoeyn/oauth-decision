@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test;
 import java.io.InputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FlowParserTest {
     private FlowParser parser;
@@ -53,9 +52,11 @@ class FlowParserTest {
                       - target: non_existent_state
                 """;
 
-        assertThatThrownBy(() -> parser.parseYaml(yaml))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Transition target 'non_existent_state' from state 'start' does not exist");
+        IllegalStateException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalStateException.class,
+                () -> parser.parseYaml(yaml)
+        );
+        assertThat(ex.getMessage()).contains("Transition target 'non_existent_state' from state 'start' does not exist");
     }
 
     @Test
@@ -67,7 +68,9 @@ class FlowParserTest {
                     type: TERMINAL
                 """;
 
-        assertThatThrownBy(() -> parser.parseYaml(yaml))
-                .isInstanceOf(IllegalArgumentException.class);
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> parser.parseYaml(yaml)
+        );
     }
 }

@@ -111,8 +111,8 @@ class DecisionEngineSimulationTest {
         FrontendStep otpScreen = turn2Plan.getFrontendSteps().get(0);
         assertThat(otpScreen.getScreenId()).isEqualTo("otp_entry_screen");
         assertThat(otpScreen.getJsonSchema()).isNotNull();
-        assertThat(otpScreen.getJsonSchema().get("properties").get("otpCode").get("pattern").asText()).isEqualTo("^[0-9]{6}$");
-        assertThat(otpScreen.getUiSchema().get("otpCode").get("ui:widget").asText()).isEqualTo("otp");
+        assertThat(otpScreen.getJsonSchema().get("properties").get("otpCode").get("pattern").asString()).isEqualTo("^[0-9]{6}$");
+        assertThat(otpScreen.getUiSchema().get("otpCode").get("ui:widget").asString()).isEqualTo("otp");
 
         // 3. Checkpoint: Host must come back once user submits OTP
         assertThat(turn2Plan.hasCheckpoint()).isTrue();

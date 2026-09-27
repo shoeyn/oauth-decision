@@ -9,11 +9,11 @@
     <version>1.0.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
-    <name>Pathfinder Decision Engine</name>
+    <name>Decision Engine</name>
     <description>Language-agnostic declarative decision engine library for OAuth and session step orchestration</description>
 
     <properties>
-        <maven.compiler.release>21</maven.compiler.release>
+        <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <cel.version>0.14.0</cel.version>
         <jackson.version>3.2.3</jackson.version>

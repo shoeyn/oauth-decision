@@ -5,5 +5,6 @@ public enum StateType {
     FRONTEND,
     COMPOSITE,
     DECISION_FORK,
-    TERMINAL
+    TERMINAL,
+    SUBFLOW
 }

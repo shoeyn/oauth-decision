@@ -1,0 +1,8 @@
+id: common_error_states
+initialState: access_denied_screen
+states:
+  access_denied_screen:
+    type: TERMINAL
+    terminal:
+      status: DENIED
+      error: "Access is strictly denied by common policy"

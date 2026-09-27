@@ -10,6 +10,7 @@ import dev.cel.runtime.CelRuntimeFactory;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -92,9 +93,20 @@ public class CelExpressionEvaluator {
             return str;
         } else if (value instanceof Map<?, ?> map) {
             Map<String, Object> resolved = new HashMap<>();
-            map.forEach((k, v) -> resolved.put(k.toString(), resolveTemplateValue(v, bindings)));
+            map.forEach((k, v) -> resolved.put(String.valueOf(k), resolveTemplateValue(v, bindings)));
             return resolved;
         }
         return value;
+    }
+
+    public Map<String, Object> resolveTemplateMap(Map<String, Object> map, Map<String, Object> bindings) {
+        if (map == null || map.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, Object> resolved = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            resolved.put(entry.getKey(), resolveTemplateValue(entry.getValue(), bindings));
+        }
+        return resolved;
     }
 }

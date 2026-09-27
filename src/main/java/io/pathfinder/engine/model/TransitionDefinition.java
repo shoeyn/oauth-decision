@@ -13,6 +13,16 @@ public class TransitionDefinition {
     private final String target;
     private final Map<String, String> contextUpdates;
     private final boolean isDefault;
+    private final String outcome;
+
+    public TransitionDefinition(
+            String event,
+            String condition,
+            String target,
+            Map<String, String> contextUpdates,
+            Boolean isDefault) {
+        this(event, condition, target, contextUpdates, isDefault, null);
+    }
 
     @JsonCreator
     public TransitionDefinition(
@@ -20,12 +30,14 @@ public class TransitionDefinition {
             @JsonProperty("if") String condition,
             @JsonProperty("target") String target,
             @JsonProperty("contextUpdates") Map<String, String> contextUpdates,
-            @JsonProperty("default") Boolean isDefault) {
+            @JsonProperty("default") Boolean isDefault,
+            @JsonProperty("outcome") String outcome) {
         this.event = event;
         this.condition = condition;
         this.target = Objects.requireNonNull(target, "target state must not be null");
         this.contextUpdates = contextUpdates != null ? Collections.unmodifiableMap(contextUpdates) : Collections.emptyMap();
         this.isDefault = Boolean.TRUE.equals(isDefault);
+        this.outcome = outcome;
     }
 
     public String getEvent() {
@@ -46,5 +58,9 @@ public class TransitionDefinition {
 
     public boolean isDefault() {
         return isDefault;
+    }
+
+    public String getOutcome() {
+        return outcome;
     }
 }

@@ -10,11 +10,25 @@ import java.util.List;
 public class StateDefinition {
     private final String id;
     private final StateType type;
+    private final String subflow;
     private final List<CommandDefinition> backendCommands;
     private final List<FrontendSchemaDefinition> frontendSchemas;
     private final TerminalConfig terminalConfig;
     private final List<TransitionDefinition> transitions;
     private final boolean forceCheckpoint;
+
+    public StateDefinition(
+            String id,
+            StateType type,
+            CommandDefinition singleCommand,
+            List<CommandDefinition> commandList,
+            FrontendSchemaDefinition singleSchema,
+            List<FrontendSchemaDefinition> schemaList,
+            TerminalConfig terminalConfig,
+            List<TransitionDefinition> transitions,
+            Boolean forceCheckpoint) {
+        this(id, type, singleCommand, commandList, singleSchema, schemaList, terminalConfig, transitions, forceCheckpoint, null);
+    }
 
     @JsonCreator
     public StateDefinition(
@@ -26,9 +40,17 @@ public class StateDefinition {
             @JsonProperty("schemas") List<FrontendSchemaDefinition> schemaList,
             @JsonProperty("terminal") TerminalConfig terminalConfig,
             @JsonProperty("on") List<TransitionDefinition> transitions,
-            @JsonProperty("checkpoint") Boolean forceCheckpoint) {
+            @JsonProperty("checkpoint") Boolean forceCheckpoint,
+            @JsonProperty("subflow") String subflow) {
         this.id = id;
-        this.type = type != null ? type : StateType.DECISION_FORK;
+        this.subflow = subflow;
+        if (type != null) {
+            this.type = type;
+        } else if (subflow != null && !subflow.isBlank()) {
+            this.type = StateType.SUBFLOW;
+        } else {
+            this.type = StateType.DECISION_FORK;
+        }
 
         List<CommandDefinition> cmds = new ArrayList<>();
         if (singleCommand != null) {
@@ -59,6 +81,10 @@ public class StateDefinition {
 
     public StateType getType() {
         return type;
+    }
+
+    public String getSubflow() {
+        return subflow;
     }
 
     public List<CommandDefinition> getBackendCommands() {
