@@ -1,6 +1,7 @@
 package io.pathfinder.engine.runtime;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Objects;
@@ -10,6 +11,7 @@ import java.util.Objects;
  * Preserves the parent flow and calling state so execution can return to the exact
  * point in the parent flow when the subflow reaches a terminal outcome.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class StackFrame {
     private final String flowId;
     private final String returnStateId;

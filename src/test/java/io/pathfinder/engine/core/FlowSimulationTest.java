@@ -428,4 +428,52 @@ class FlowSimulationTest {
         assertThat(trace).contains("[Outcome] DENIED (Error: fraud_detected: Suspicious activity detected from IP address.)");
         assertThat(trace).contains("[UI Dropout: Stays in UI]");
     }
+
+    @Test
+    void testFrontendStepDynamicInterpolation() {
+        String yaml = """
+            id: personalized_ui_flow
+            initialState: show_prompt
+            states:
+              show_prompt:
+                type: FRONTEND
+                schemas:
+                  - screenId: personalized_otp
+                    title: "Hello ${data.name}, please verify"
+                    description: "Code sent to ${data.maskedEmail}"
+                    data:
+                      clientId: "${config.clientId}"
+                      maskedEmail: "${data.maskedEmail}"
+                transitions:
+                  - if: "input.code == '1234'"
+                    target: verified
+              verified:
+                type: TERMINAL
+                terminal:
+                  status: SUCCESS
+            """;
+
+        FlowDefinition flow = new FlowParser().parseYaml(yaml);
+        SessionContext context = SessionContext.builder()
+                .data("name", "Alice")
+                .data("maskedEmail", "a***@example.com")
+                .config("clientId", "demo-client")
+                .build();
+
+        // 1. Initial turn: verify screen properties are dynamically interpolated via CEL
+        ExecutionPlan plan = engine.evaluate(flow, null, context, Event.start());
+        assertThat(plan.hasFrontendSteps()).isTrue();
+        FrontendStep step = plan.getFrontendSteps().get(0);
+
+        assertThat(step.getTitle()).isEqualTo("Hello Alice, please verify");
+        assertThat(step.getDescription()).isEqualTo("Code sent to a***@example.com");
+        assertThat(step.getData()).containsEntry("clientId", "demo-client");
+        assertThat(step.getData()).containsEntry("maskedEmail", "a***@example.com");
+
+        // 2. Full simulation
+        FlowSimulation sim = engine.simulate(flow, context, Map.of("personalized_otp", Map.of("code", "1234")));
+        assertThat(sim.isSuccess()).isTrue();
+        assertThat(sim.getAllScreens()).hasSize(1);
+        assertThat(sim.getAllScreens().get(0).getTitle()).isEqualTo("Hello Alice, please verify");
+    }
 }

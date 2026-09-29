@@ -1,6 +1,7 @@
 package io.pathfinder.engine.runtime;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Collections;
@@ -8,6 +9,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class Checkpoint {
     public static final String ACTION_COME_BACK = "COME_BACK_TO_ME";
 

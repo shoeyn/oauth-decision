@@ -1,9 +1,14 @@
 package io.pathfinder.engine.runtime;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class ExecutionPlan {
     private final String currentState;
     private final List<BackendStep> backendSteps;
@@ -12,14 +17,14 @@ public class ExecutionPlan {
     private final TerminalResult terminal;
     private final SessionContext updatedContext;
 
-    @com.fasterxml.jackson.annotation.JsonCreator
+    @JsonCreator
     public ExecutionPlan(
-            @com.fasterxml.jackson.annotation.JsonProperty("currentState") String currentState,
-            @com.fasterxml.jackson.annotation.JsonProperty("backendSteps") List<BackendStep> backendSteps,
-            @com.fasterxml.jackson.annotation.JsonProperty("frontendSteps") List<FrontendStep> frontendSteps,
-            @com.fasterxml.jackson.annotation.JsonProperty("checkpoint") Checkpoint checkpoint,
-            @com.fasterxml.jackson.annotation.JsonProperty("terminal") TerminalResult terminal,
-            @com.fasterxml.jackson.annotation.JsonProperty("updatedContext") SessionContext updatedContext) {
+            @JsonProperty("currentState") String currentState,
+            @JsonProperty("backendSteps") List<BackendStep> backendSteps,
+            @JsonProperty("frontendSteps") List<FrontendStep> frontendSteps,
+            @JsonProperty("checkpoint") Checkpoint checkpoint,
+            @JsonProperty("terminal") TerminalResult terminal,
+            @JsonProperty("updatedContext") SessionContext updatedContext) {
         this.currentState = currentState;
         this.backendSteps = backendSteps != null ? Collections.unmodifiableList(new ArrayList<>(backendSteps)) : Collections.emptyList();
         this.frontendSteps = frontendSteps != null ? Collections.unmodifiableList(new ArrayList<>(frontendSteps)) : Collections.emptyList();

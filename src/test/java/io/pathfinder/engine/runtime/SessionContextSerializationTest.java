@@ -118,4 +118,65 @@ class SessionContextSerializationTest {
         assertThat(scrubbed.getData()).doesNotContainKey("otpCode");
         assertThat(scrubbed.getData()).containsEntry("userId", "alice");
     }
+
+    @Test
+    void testSessionContextBuilder() {
+        SessionContext context = SessionContext.builder()
+                .data("userId", "e8d47b6a-9b12-4c22-8399-5ef86134b220")
+                .data("email", "alice_smith@example.com")
+                .config("clientId", "demo-client")
+                .config("requireMfa", true)
+                .input(Map.of("otpCode", "123456"))
+                .build();
+
+        assertThat(context.getData()).containsEntry("userId", "e8d47b6a-9b12-4c22-8399-5ef86134b220");
+        assertThat(context.getConfig()).containsEntry("clientId", "demo-client");
+        assertThat(context.getInput()).containsEntry("otpCode", "123456");
+    }
+
+    @Test
+    void testSessionContextDeserializationWithExtraPropertiesAndAliases() throws Exception {
+        // Simulating a Redis JSON payload that has extra metadata (e.g. from Rails or proxy)
+        String redisJson = """
+            {
+              "context": {
+                "username": "alice",
+                "email": "alice@example.com"
+              },
+              "config": {
+                "clientId": "portal"
+              },
+              "txId": "c4b4f572-8888-4444-9999-123456789abc",
+              "created_at": "2026-09-29T20:30:00Z",
+              "extraProxyHeader": "x-forwarded-for"
+            }
+            """;
+
+        SessionContext context = mapper.readValue(redisJson, SessionContext.class);
+
+        assertThat(context.getData()).containsEntry("username", "alice");
+        assertThat(context.getData()).containsEntry("email", "alice@example.com");
+        assertThat(context.getConfig()).containsEntry("clientId", "portal");
+    }
+
+    @Test
+    void testFrontendStepSerializationWithData() throws Exception {
+        FrontendStep step = new FrontendStep(
+                "otp_screen",
+                "Verify Alice",
+                "Enter code sent to alice@example.com",
+                null,
+                null,
+                Map.of("maskedPhone", "***-***-1234", "clientName", "Demo Client"),
+                List.of()
+        );
+
+        String json = mapper.writeValueAsString(step);
+        FrontendStep deserialized = mapper.readValue(json, FrontendStep.class);
+
+        assertThat(deserialized.getScreenId()).isEqualTo("otp_screen");
+        assertThat(deserialized.getTitle()).isEqualTo("Verify Alice");
+        assertThat(deserialized.getData()).containsEntry("maskedPhone", "***-***-1234");
+        assertThat(deserialized.getData()).containsEntry("clientName", "Demo Client");
+    }
 }

@@ -55,7 +55,7 @@ public class StateDefinition {
             @JsonProperty("schema") FrontendSchemaDefinition singleSchema,
             @JsonProperty("schemas") List<FrontendSchemaDefinition> schemaList,
             @JsonProperty("terminal") TerminalConfig terminalConfig,
-            @JsonProperty("on") List<TransitionDefinition> transitions,
+            @JsonProperty("on") @com.fasterxml.jackson.annotation.JsonAlias({"transitions"}) List<TransitionDefinition> transitions,
             @JsonProperty("checkpoint") Boolean forceCheckpoint,
             @JsonProperty("subflow") String subflow,
             @JsonProperty("onError") String onError,

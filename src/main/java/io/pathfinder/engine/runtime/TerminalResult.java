@@ -1,11 +1,14 @@
 package io.pathfinder.engine.runtime;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Collections;
 import java.util.Map;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class TerminalResult {
     public static final String STATUS_SUCCESS = "SUCCESS";
     public static final String STATUS_DENIED = "DENIED";
@@ -14,6 +17,7 @@ public class TerminalResult {
 
     public static final String ACTION_REDIRECT = "REDIRECT";
     public static final String ACTION_UI = "UI";
+    public static final String ACTION_UI_DROPOUT = "UI_DROPOUT";
     public static final String ACTION_COMPLETE = "COMPLETE";
 
     private final String status;
@@ -32,8 +36,8 @@ public class TerminalResult {
             @JsonProperty("status") String status,
             @JsonProperty("claims") Map<String, Object> claims,
             @JsonProperty("error") String error,
-            @JsonProperty("errorDescription") String errorDescription,
-            @JsonProperty("redirectUrl") String redirectUrl,
+            @JsonProperty("errorDescription") @JsonAlias({"error_description", "description", "message"}) String errorDescription,
+            @JsonProperty("redirectUrl") @JsonAlias({"redirect_url", "failureUrl", "failure_url"}) String redirectUrl,
             @JsonProperty("action") String action) {
         this.status = status != null ? status : STATUS_SUCCESS;
         this.claims = claims != null ? Collections.unmodifiableMap(claims) : Collections.emptyMap();
@@ -100,7 +104,7 @@ public class TerminalResult {
     }
 
     public boolean isUiDropout() {
-        return ACTION_UI.equalsIgnoreCase(action);
+        return ACTION_UI.equalsIgnoreCase(action) || ACTION_UI_DROPOUT.equalsIgnoreCase(action);
     }
 
     @Override

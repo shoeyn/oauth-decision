@@ -242,3 +242,78 @@ assertThat(sim.getTerminalResult().isUiDropout()).isTrue();
 assertThat(sim.getScreens()).extracting("screenId").contains("fraud_blocked_screen");
 ```
 
+---
+
+### G. Server-Driven UI Dynamic CEL Interpolation (`step.getData()`)
+
+Frontend screens defined in YAML are not limited to static strings. The Decision Engine dynamically interpolates Google CEL expressions embedded within screen `title`, `description`, and custom `data` (props/parameters) maps:
+
+```yaml
+states:
+  prompt_mfa:
+    type: FRONTEND
+    schemas:
+      - screenId: otp_challenge
+        title: "Verify Identity for ${config.clientName}"
+        description: "Security passcode sent to ${data.emailMasked}."
+        data:
+          destination: "${data.emailMasked}"
+          channel: "SMS"
+          maxTries: "${config.maxOtpAttempts}"
+        jsonSchema:
+          type: object
+          required: [otpCode]
+          properties:
+            otpCode:
+              type: string
+              pattern: "^[0-9]{6}$"
+```
+
+When evaluated, the emitted `FrontendStep` contains fully resolved strings and a resolved `data` map:
+```java
+FrontendStep step = plan.getFrontendSteps().getFirst();
+System.out.println(step.getTitle());       // "Verify Identity for Banking Portal"
+System.out.println(step.getDescription()); // "Security passcode sent to a***@example.com."
+System.out.println(step.getData());        // {destination: "a***@example.com", channel: "SMS", maxTries: 3}
+```
+
+This allows UI frontends (such as Rails ERB, React, or mobile native apps) to display rich, contextual information without hardcoding business copy or re-querying user profiles.
+
+---
+
+### H. Fluent `SessionContext.builder()`
+
+To simplify constructing session contexts in Java host applications, `SessionContext` provides a fluent builder:
+
+```java
+SessionContext context = SessionContext.builder()
+    .data("userId", "user_123")
+    .data("emailMasked", "a***@example.com")
+    .data("riskScore", 85)
+    .config("clientId", "mobile-app")
+    .config("requireMfa", true)
+    .transientData("ephemeralAuthNonce", "xyz-789")
+    .build();
+```
+
+The builder:
+* Automatically initialises empty immutable maps if none are provided.
+* Allows individual key-value pairs or bulk map insertion (`.data(map)`, `.config(map)`).
+* Protects against null pointers while maintaining the strict immutability contract of `SessionContext`.
+
+---
+
+### I. Cross-Service Redis Serialization Resilience
+
+When deploying Pathfinder across distributed architectures (e.g. Spring Boot auth servers, Rails UI frontends, and Python microservices communicating over Redis DB 0), runtime payloads are subject to schema evolution, additional host attributes, and varying casing conventions.
+
+Pathfinder guarantees zero deserialization failures through built-in resilience:
+1. **`@JsonIgnoreProperties(ignoreUnknown = true)`**:
+   Applied to `SessionContext`, `ExecutionPlan`, `Checkpoint`, `FrontendStep`, `BackendStep`, `StackFrame`, and `TerminalResult`. Host applications can attach extraneous metadata (such as tracing IDs, spans, or server timestamps) without breaking Pathfinder.
+2. **Multi-Convention Aliases (`@JsonAlias`)**:
+   - `data` parameter in `SessionContext`: accepts `"data"`, `"context"`, `"user"`, and `"attributes"`.
+   - `data` parameter in `FrontendStep`: accepts `"data"`, `"props"`, `"parameters"`, `"initialData"`, and `"initial_data"`.
+   - `redirectUrl` in `TerminalResult`: accepts `"redirectUrl"`, `"redirect_url"`, `"failureUrl"`, and `"failure_url"`.
+   - `transitions` in `StateDefinition`: accepts `"on"` and `"transitions"`.
+
+

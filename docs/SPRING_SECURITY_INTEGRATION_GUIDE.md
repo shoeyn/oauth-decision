@@ -15,51 +15,81 @@ In an enterprise OAuth deployment:
 4. **Server-Driven UI**: Emits JSON Schema and UI Schema descriptors for Rails or frontend clients to render.
 5. **Verified Claims Issuance**: Resolves final claims (`sub`, `acr`, `amr`) to be injected into JWTs by Spring Security's `OAuth2TokenCustomizer`.
 
-```
-[ User Browser ]
-       │
-       ▼
-1. GET /oauth2/authorize?client_id=portal&acr_values=urn:pathfinder:auth:level2
-       │
-       ▼
-[ Spring Authorization Server ] ── (Checks user session in Redis)
-       │
-       ├──► [ Pathfinder DecisionEngine ]
-       │         │
-       │         └──► 2. Emits Plan: BackendStep('check_device_risk')
-       │
-       ├──► 3. Spring dispatches to FraudEngineService -> riskScore = 75 (High)
-       │
-       ├──► 4. Resumes DecisionEngine.evaluate(..., Event.resume(results))
-       │         │
-       │         └──► 5. Yields Checkpoint & FrontendStep: 'otp_entry_screen'
-       │
-       ▼ 6. Persists context to Redis & redirects to Rails IdP (/challenges/otp?tx=UUID)
-[ Rails Identity Provider ]
-       │
-       ├──► 7. Renders JSON Schema UI (6-digit OTP prompt)
-       │
-       ▼ 8. User submits OTP
-[ Rails Identity Provider ] ──► POST /api/challenges/otp { tx: UUID, otpCode: "123456" }
-                                           │
-                                           ▼
-                            [ Spring Authorization Server ]
-                                           │
-                                           ├──► Loads SessionContext & Checkpoint from Redis
-                                           │
-                                           ├──► [ Pathfinder DecisionEngine ]
-                                           │         │
-                                           │         ├──► Validates JSON Schema & Scopes Input
-                                           │         ├──► Emits BackendStep: 'verify_code'
-                                           │         │       └──► Spring executes OtpService -> valid: true
-                                           │         └──► Terminal: SUCCESS (acr: level2, amr: ["pwd","otp"])
-                                           │
-                                           ▼
-                            [ Spring Authorization Server ]
-                                           │
-                                           ├──► Injects verified claims in OAuth2TokenCustomizer
-                                           ├──► Persists Grant to PostgreSQL
-                                           └──► Mints JARM Authorization Response (code=...)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User Browser
+    participant Client as Demo Client (:8080)
+    participant Spring as Spring Auth Server (:9000)
+    participant Redis as Redis DB 0 (:6379)
+    participant Rails as Rails IdP (:3000)
+    participant Engine as Pathfinder Engine
+    participant KMS as AWS KMS HSM (:4566)
+
+    %% Phase 1: PAR Initiation & Rails SSO
+    rect rgb(240, 248, 255)
+    Note over User, KMS: Phase 1: PAR Handshake & Initial Rails SSO Authentication
+    User->>Client: Click "Start Secure Login"
+    Client->>Spring: POST /oauth2/par (DPoP + private_key_jwt)
+    Spring-->>Client: 201 Created { request_uri: "urn:..." }
+    Client-->>User: 302 Redirect to /oauth2/authorize?client_id=demo-client&request_uri=urn:...
+    User->>Spring: GET /oauth2/authorize (No SHARED_SESSION_ID cookie)
+    Spring-->>User: 302 Redirect to http://localhost:3000/login?return_to=...
+    User->>Rails: POST /login (email, password)
+    Note over Rails: SHA-256 pre-hash password<br/>Authenticate against Spring /api/admin/users/authenticate
+    Rails->>Redis: SET session:<uuid> (user JSON payload, EX 7200)
+    Rails-->>User: 302 Redirect to return_to with Set-Cookie: SHARED_SESSION_ID=<uuid>
+    end
+
+    %% Phase 2: Pathfinder Step-Up & Decision Orchestration
+    rect rgb(255, 250, 240)
+    Note over User, KMS: Phase 2: Pathfinder Step-Up Evaluation at /oauth2/authorize
+    User->>Spring: GET /oauth2/authorize (Cookie: SHARED_SESSION_ID=<uuid>)
+    Spring->>Redis: GET session:<uuid> -> Authenticates SecurityContext
+    Note over Spring: Build SessionContext.builder()<br/>.data(user attributes, ip)<br/>.config(client policy, requireMfa)
+    Spring->>Engine: evaluate("oauth-stepup-auth", null, session, Event.start())
+    Engine-->>Spring: ExecutionPlan { backendSteps: ["check_device_risk"], checkpoint: "evaluate_risk" }
+    Note over Spring: Dispatch fraud check -> riskScore = 75 (High)
+    Spring->>Engine: evaluate("oauth-stepup-auth", "evaluate_risk", context, Event.resume(results))
+    Engine-->>Spring: ExecutionPlan { frontendSteps: ["otp_entry_screen"], checkpoint: "prompt_otp" }
+    Note over Spring: Flow requires user interaction!<br/>Write ExecutionPlan to Redis DB 0
+    Spring->>Redis: SET pathfinder:tx:<txId> (ExecutionPlan JSON, EX 600)
+    Spring-->>User: 302 Redirect to http://localhost:3000/challenges/flow?flow_tx=<txId>
+    end
+
+    %% Phase 3: Rails Server-Driven Challenge UI
+    rect rgb(240, 255, 240)
+    Note over User, KMS: Phase 3: Rails Server-Driven Challenge UI & Submission
+    User->>Rails: GET /challenges/flow?flow_tx=<txId>
+    Rails->>Redis: GET pathfinder:tx:<txId>
+    Redis-->>Rails: ExecutionPlan (title, description, jsonSchema, dynamic data)
+    Note over Rails: Render personalized OTP form using dynamic props<br/>("Code sent to a***@example.com")
+    User->>Rails: POST /challenges/flow/submit { flow_tx: <txId>, otpCode: "123456" }
+    Rails-->>User: 302 Redirect to Spring /oauth2/authorize?flow_tx=<txId>&otpCode=123456
+    end
+
+    %% Phase 4: Verification & Outcomes (Success / Dropouts)
+    rect rgb(255, 245, 255)
+    Note over User, KMS: Phase 4: Pathfinder Verification & Terminal Outcomes
+    User->>Spring: GET /oauth2/authorize?flow_tx=<txId>&otpCode=123456
+    Spring->>Redis: GET pathfinder:tx:<txId>
+    Spring->>Engine: evaluate("oauth-stepup-auth", "prompt_otp", context, Event.submit(input))
+    
+    alt A. Terminal SUCCESS
+        Engine-->>Spring: ExecutionPlan { terminal: SUCCESS, claims: { acr: "level2", amr: ["pwd","otp"] } }
+        Note over Spring: Inject verified claims in TokenCustomizerConfig<br/>Sign JARM response with AWS KMS ES256
+        Spring->>KMS: kms:Sign(JARM payload, ES256)
+        KMS-->>Spring: Signed JARM ES256 token
+        Spring-->>User: 302 Redirect to Demo Client callback: ?response=<JARM_JWT>
+    else B. Redirect Failure URL Dropout (e.g. User Denied Consent)
+        Engine-->>Spring: ExecutionPlan { terminal: DENIED, action: REDIRECT, redirectUrl: "https://client/callback?error=access_denied&state=..." }
+        Spring-->>User: 302 Redirect to Client callback URL with error params
+    else C. Hard UI Dropout (e.g. Account Locked / 3 Failed OTP Attempts)
+        Engine-->>Spring: ExecutionPlan { terminal: DENIED, action: UI_DROPOUT, frontendSteps: ["account_locked_screen"] }
+        Spring-->>User: 302 Redirect to http://localhost:3000/challenges/lockout?flow_tx=<txId>
+        Note over User, Rails: Browser STAYS in UI (no redirect to client)!<br/>Rails renders terminal account suspended screen.
+    end
+    end
 ```
 
 ---
@@ -242,17 +272,12 @@ public class PathfinderStepUpAuthorizationFilter extends OncePerRequestFilter {
     }
 
     // 2. Initialize Pathfinder session with clean data and client config separation
-    Map<String, Object> sessionData = Map.of(
-        "userId", auth.getName(),
-        "ip", request.getRemoteAddr()
-    );
-
-    Map<String, Object> clientConfig = Map.of(
-        "clientId", clientId != null ? clientId : "default",
-        "requireMfa", "urn:pathfinder:auth:level2".equalsIgnoreCase(request.getParameter("acr_values"))
-    );
-
-    SessionContext session = new SessionContext(sessionData, clientConfig);
+    SessionContext session = SessionContext.builder()
+        .data("userId", auth.getName())
+        .data("ip", request.getRemoteAddr())
+        .config("clientId", clientId != null ? clientId : "default")
+        .config("requireMfa", "urn:pathfinder:auth:level2".equalsIgnoreCase(request.getParameter("acr_values")))
+        .build();
 
     // 3. Initial evaluation turn
     ExecutionPlan plan = engine.evaluate("oauth-stepup-auth", null, session, Event.start());
@@ -363,6 +388,198 @@ public class TokenCustomizerConfig {
   }
 }
 ```
+
+---
+
+## 4. Rails Server-Driven UI Implementation & Shared Redis DB 0 Integration
+
+The [rails-app](file:///Users/nathanshoemark/SpringSecurity/rails-app) acts as the interactive Identity Provider UI (running on port 3000). Both `spring-auth-server` and `rails-app` share **Redis DB 0** (`redis://localhost:6379/0`).
+
+When Pathfinder encounters an interactive checkpoint (e.g. OTP prompt, biometric choice, or consent approval), Spring writes the execution state to Redis under `pathfinder:tx:<txId>` and redirects the user browser to Rails:
+`http://localhost:3000/challenges/flow?flow_tx=<txId>`
+
+### A. Rails Controller: `app/controllers/challenges_controller.rb`
+
+```ruby
+# frozen_string_literal: true
+
+class ChallengesController < ApplicationController
+  before_action :require_shared_session
+  before_action :load_flow_transaction, only: %i[show submit]
+
+  # GET /challenges/flow?flow_tx=<txId>
+  def show
+    @step = @tx["frontendSteps"]&.first
+    if @step.nil?
+      redirect_to root_path, alert: "No active verification challenge found."
+      return
+    end
+
+    # Dynamic server-driven UI props interpolated by Pathfinder CEL engine:
+    @screen_id   = @step["screenId"]
+    @title       = @step["title"]
+    @description = @step["description"]
+    @schema      = @step["jsonSchema"] || {}
+    @ui_schema   = @step["uiSchema"] || {}
+    @step_data   = @step["data"] || {} # Dynamic data (e.g. masked phone, email, attempt number)
+    @tx_id       = params[:flow_tx]
+  end
+
+  # POST /challenges/flow/submit
+  def submit
+    # Extract only the fields declared in the schema (or user input params)
+    step_input = params.permit!.to_h.except(:controller, :action, :authenticity_token, :flow_tx)
+
+    # 1. Update the Redis transaction with user input so Spring resumes evaluation
+    @tx["userInput"] = step_input
+    $redis.setex("pathfinder:tx:#{params[:flow_tx]}", 600, @tx.to_json)
+
+    # 2. Redirect back to Spring Security's /oauth2/authorize endpoint to resume the engine
+    spring_authorize_url = URI.parse("http://localhost:9000/oauth2/authorize")
+    query_hash = Rack::Utils.parse_nested_query(spring_authorize_url.query || "")
+    query_hash["flow_tx"] = params[:flow_tx]
+    
+    # Forward user inputs as query parameters or let Spring read from Redis
+    step_input.each { |k, v| query_hash[k.to_s] = v.to_s }
+    spring_authorize_url.query = Rack::Utils.build_query(query_hash)
+
+    redirect_to spring_authorize_url.to_s, allow_other_host: true
+  end
+
+  # GET /challenges/lockout?flow_tx=<txId>
+  def lockout
+    raw_tx = params[:flow_tx].present? ? $redis.get("pathfinder:tx:#{params[:flow_tx]}") : nil
+    @tx = raw_tx.present? ? JSON.parse(raw_tx) : {}
+    @error_description = @tx.dig("terminalResult", "errorDescription") || 
+                         "Your account has been temporarily locked due to excessive failed attempts."
+
+    # HARD UI DROPOUT: Never redirect to client redirect_uri!
+    render :lockout, status: :forbidden
+  end
+
+  private
+
+  def load_flow_transaction
+    tx_id = params[:flow_tx]
+    if tx_id.blank?
+      redirect_to root_path, alert: "Missing transaction identifier."
+      return
+    end
+
+    raw_json = $redis.get("pathfinder:tx:#{tx_id}")
+    if raw_json.blank?
+      redirect_to root_path, alert: "Verification session expired. Please sign in again."
+      return
+    end
+
+    @tx = JSON.parse(raw_json)
+  end
+
+  def require_shared_session
+    session_id = cookies[:SHARED_SESSION_ID]
+    if session_id.blank? || $redis.get("session:#{session_id}").blank?
+      redirect_to login_path(return_to: request.original_url)
+    end
+  end
+end
+```
+
+---
+
+### B. Rails Server-Driven View: `app/views/challenges/flow.html.erb`
+
+```erb
+<%# Dynamic Server-Driven Challenge Screen %>
+<div class="max-w-md mx-auto my-12 bg-white p-8 rounded-xl shadow-lg border border-slate-200">
+  <div class="text-center mb-6">
+    <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-blue-100 text-blue-600 mb-4">
+      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+      </svg>
+    </div>
+    <h1 class="text-2xl font-bold text-slate-900"><%= @title %></h1>
+    <p class="text-sm text-slate-500 mt-2"><%= @description %></p>
+    <% if @step_data["emailMasked"].present? %>
+      <span class="inline-block mt-2 px-3 py-1 bg-slate-100 text-slate-700 text-xs font-semibold rounded-full">
+        Sent to <%= @step_data["emailMasked"] %>
+      </span>
+    <% end %>
+  </div>
+
+  <%= form_with url: challenges_flow_submit_path, method: :post, local: true, class: "space-y-4" do |f| %>
+    <%= f.hidden_field :flow_tx, value: @tx_id %>
+
+    <%# Iterate dynamically over JSON Schema declared properties %>
+    <% (@schema["properties"] || {}).each do |field_name, field_def| %>
+      <div>
+        <label for="<%= field_name %>" class="block text-sm font-medium text-slate-700 mb-1">
+          <%= field_def["title"] || field_name.humanize %>
+        </label>
+        
+        <% widget = @ui_schema.dig(field_name, "ui:widget") %>
+        <% placeholder = @ui_schema.dig(field_name, "ui:placeholder") || "" %>
+        <% autofocus = @ui_schema.dig(field_name, "ui:autofocus") || false %>
+
+        <% if widget == "otp" %>
+          <%= text_field_tag field_name, nil, 
+                maxlength: 6, 
+                placeholder: placeholder, 
+                autofocus: autofocus,
+                pattern: field_def["pattern"] || "[0-9]{6}",
+                required: (@schema["required"] || []).include?(field_name),
+                class: "w-full text-center tracking-widest text-2xl font-mono py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+        <% else %>
+          <%= text_field_tag field_name, nil, 
+                placeholder: placeholder, 
+                autofocus: autofocus,
+                required: (@schema["required"] || []).include?(field_name),
+                class: "w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+        <% end %>
+      </div>
+    <% end %>
+
+    <div class="pt-4">
+      <%= f.submit "Verify & Continue", 
+            class: "w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow transition duration-150 cursor-pointer" %>
+    </div>
+  <% end %>
+</div>
+```
+
+---
+
+### C. Rails Lockout View (Hard UI Dropout): `app/views/challenges/lockout.html.erb`
+
+```erb
+<%# Terminal Hard Lockout Screen - Stays in UI! %>
+<div class="max-w-md mx-auto my-12 bg-white p-8 rounded-xl shadow-lg border border-red-200">
+  <div class="text-center">
+    <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-100 text-red-600 mb-4">
+      <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+      </svg>
+    </div>
+    <h1 class="text-2xl font-bold text-slate-900">Access Suspended</h1>
+    <p class="text-sm text-slate-600 mt-3 leading-relaxed">
+      <%= @error_description %>
+    </p>
+    
+    <div class="mt-6 p-4 bg-amber-50 rounded-lg border border-amber-200 text-left text-xs text-amber-800">
+      <p class="font-semibold mb-1">Security Notice (OWASP / RFC 6819):</p>
+      <p>To protect your account credentials and prevent automated enumeration attacks, this session has been locked. The authorization process was halted and no redirect was issued to the requesting application.</p>
+    </div>
+
+    <div class="mt-8">
+      <%= link_to "Return to Sign In", login_path, class: "inline-block text-sm font-medium text-blue-600 hover:text-blue-800" %>
+    </div>
+  </div>
+</div>
+```
+
+> [!CAUTION]
+> **Vulnerability Fixed in Rails `SessionsController`**:
+> In earlier versions of `sessions_controller.rb`, if `return_to` was present, suspended accounts were inadvertently redirected back to the client application (`resolve_client_failure_redirect`). 
+> Pathfinder's `UI_DROPOUT` contract guarantees that fraudulent or brute-forced sessions **stay in the UI** at `/challenges/lockout` and are never redirected back to client `redirect_uri` endpoints.
 
 ---
 

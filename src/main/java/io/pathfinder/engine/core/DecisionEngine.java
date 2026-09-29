@@ -104,16 +104,26 @@ public class DecisionEngine {
 
         // 3. If this is a SUBMIT event from a frontend step, validate input against JSON Schema first
         if (Event.TYPE_SUBMIT.equalsIgnoreCase(activeEvent.getType()) && !currentState.getFrontendSchemas().isEmpty()) {
+            Map<String, Object> validationBindings = new LinkedHashMap<>();
+            validationBindings.put("data", activeContext.getData());
+            validationBindings.put("context", activeContext.getData());
+            validationBindings.put("config", activeContext.getConfig());
+            validationBindings.put("input", activeEvent.getPayload() != null ? activeEvent.getPayload() : Collections.emptyMap());
+
             for (FrontendSchemaDefinition schemaDef : currentState.getFrontendSchemas()) {
                 if (schemaDef.getJsonSchema() != null) {
                     List<String> errors = schemaValidator.validate(schemaDef.getJsonSchema(), activeEvent.getPayload());
                     if (!errors.isEmpty()) {
+                        String title = celEvaluator.resolveTemplateString(schemaDef.getTitle(), validationBindings);
+                        String desc = celEvaluator.resolveTemplateString(schemaDef.getDescription(), validationBindings);
+                        Map<String, Object> data = celEvaluator.resolveTemplateMap(schemaDef.getData(), validationBindings);
                         FrontendStep failedStep = new FrontendStep(
                                 schemaDef.getScreenId(),
-                                schemaDef.getTitle(),
-                                schemaDef.getDescription(),
+                                title,
+                                desc,
                                 schemaDef.getJsonSchema(),
                                 schemaDef.getUiSchema(),
+                                data,
                                 errors
                         );
                         return ExecutionPlan.builder()
@@ -239,12 +249,16 @@ public class DecisionEngine {
 
                 // If this terminal state has frontend schemas (e.g. hard UI dropout screen), accumulate them!
                 for (FrontendSchemaDefinition schemaDef : currentState.getFrontendSchemas()) {
+                    String title = celEvaluator.resolveTemplateString(schemaDef.getTitle(), bindings);
+                    String desc = celEvaluator.resolveTemplateString(schemaDef.getDescription(), bindings);
+                    Map<String, Object> data = celEvaluator.resolveTemplateMap(schemaDef.getData(), bindings);
                     planBuilder.addFrontendStep(new FrontendStep(
                             schemaDef.getScreenId(),
-                            schemaDef.getTitle(),
-                            schemaDef.getDescription(),
+                            title,
+                            desc,
                             schemaDef.getJsonSchema(),
                             schemaDef.getUiSchema(),
+                            data,
                             Collections.emptyList()
                     ));
                 }
@@ -320,12 +334,16 @@ public class DecisionEngine {
 
             // Accumulate Frontend Steps
             for (FrontendSchemaDefinition schemaDef : currentState.getFrontendSchemas()) {
+                String title = celEvaluator.resolveTemplateString(schemaDef.getTitle(), bindings);
+                String desc = celEvaluator.resolveTemplateString(schemaDef.getDescription(), bindings);
+                Map<String, Object> data = celEvaluator.resolveTemplateMap(schemaDef.getData(), bindings);
                 planBuilder.addFrontendStep(new FrontendStep(
                         schemaDef.getScreenId(),
-                        schemaDef.getTitle(),
-                        schemaDef.getDescription(),
+                        title,
+                        desc,
                         schemaDef.getJsonSchema(),
                         schemaDef.getUiSchema(),
+                        data,
                         Collections.emptyList()
                 ));
             }
@@ -481,12 +499,16 @@ public class DecisionEngine {
             // Resolve frontend screens for this state
             List<FrontendStep> frontendSteps = new ArrayList<>();
             for (FrontendSchemaDefinition schemaDef : currentState.getFrontendSchemas()) {
+                String title = celEvaluator.resolveTemplateString(schemaDef.getTitle(), bindings);
+                String desc = celEvaluator.resolveTemplateString(schemaDef.getDescription(), bindings);
+                Map<String, Object> data = celEvaluator.resolveTemplateMap(schemaDef.getData(), bindings);
                 frontendSteps.add(new FrontendStep(
                         schemaDef.getScreenId(),
-                        schemaDef.getTitle(),
-                        schemaDef.getDescription(),
+                        title,
+                        desc,
                         schemaDef.getJsonSchema(),
                         schemaDef.getUiSchema(),
+                        data,
                         Collections.emptyList()
                 ));
 

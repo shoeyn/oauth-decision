@@ -1,10 +1,13 @@
 package io.pathfinder.engine.runtime;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.*;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class SessionContext {
     public static final Set<String> DEFAULT_SENSITIVE_KEYS = Set.of(
             "password", "passwd", "secret", "client_secret",
@@ -68,7 +71,7 @@ public class SessionContext {
 
     @JsonCreator
     public SessionContext(
-            @JsonProperty("data") Map<String, Object> data,
+            @JsonProperty("data") @JsonAlias({"context", "user", "attributes"}) Map<String, Object> data,
             @JsonProperty("config") Map<String, Object> config,
             @JsonProperty("transientData") Map<String, Object> transientData,
             @JsonProperty("history") List<String> history,
@@ -304,6 +307,69 @@ public class SessionContext {
 
     public SessionContext clearTransient() {
         return new SessionContext(this.data, this.config, Collections.emptyMap(), this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
+    }
+
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static class Builder {
+        private final Map<String, Object> data = new LinkedHashMap<>();
+        private final Map<String, Object> config = new LinkedHashMap<>();
+        private final Map<String, Object> transientData = new LinkedHashMap<>();
+        private final List<String> history = new ArrayList<>();
+        private String currentFlowId;
+        private final List<StackFrame> callStack = new ArrayList<>();
+        private final Set<String> sensitiveKeys = new HashSet<>();
+        private final Map<String, Object> input = new LinkedHashMap<>();
+        private final Map<String, Integer> attempts = new LinkedHashMap<>();
+
+        public Builder data(Map<String, Object> data) {
+            if (data != null) this.data.putAll(data);
+            return this;
+        }
+
+        public Builder data(String key, Object value) {
+            this.data.put(key, value);
+            return this;
+        }
+
+        public Builder config(Map<String, Object> config) {
+            if (config != null) this.config.putAll(config);
+            return this;
+        }
+
+        public Builder config(String key, Object value) {
+            this.config.put(key, value);
+            return this;
+        }
+
+        public Builder transientData(Map<String, Object> transientData) {
+            if (transientData != null) this.transientData.putAll(transientData);
+            return this;
+        }
+
+        public Builder input(Map<String, Object> input) {
+            if (input != null) this.input.putAll(input);
+            return this;
+        }
+
+        public Builder currentFlowId(String currentFlowId) {
+            this.currentFlowId = currentFlowId;
+            return this;
+        }
+
+        public Builder sensitiveKeys(Collection<String> keys) {
+            if (keys != null) this.sensitiveKeys.addAll(keys);
+            return this;
+        }
+
+        public SessionContext build() {
+            return new SessionContext(
+                    data, config, transientData, history, currentFlowId,
+                    callStack, sensitiveKeys, input, attempts
+            );
+        }
     }
 
     @Override

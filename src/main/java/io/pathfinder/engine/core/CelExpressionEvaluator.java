@@ -139,6 +139,14 @@ public class CelExpressionEvaluator {
         return value;
     }
 
+    public String resolveTemplateString(String template, Map<String, Object> bindings) {
+        if (template == null) {
+            return null;
+        }
+        Object resolved = resolveTemplateValue(template, bindings);
+        return resolved != null ? resolved.toString() : null;
+    }
+
     public Map<String, Object> resolveTemplateMap(Map<String, Object> map, Map<String, Object> bindings) {
         if (map == null || map.isEmpty()) {
             return Collections.emptyMap();

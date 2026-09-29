@@ -515,16 +515,24 @@ Subflow Visual Trace Output:
 
 ## Stateless Session Persistence & Security
 
-### 1. Redis / Cookie JSON Roundtripping
-OAuth servers run over stateless HTTP. All runtime models ([SessionContext](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/SessionContext.java), [Checkpoint](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/Checkpoint.java), [ExecutionPlan](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/ExecutionPlan.java)) feature complete Jackson `@JsonCreator` and `@JsonProperty` decorators:
+### 1. Redis / Cookie JSON Roundtripping & Cross-Service Resilience
+OAuth servers run over stateless HTTP. All runtime models ([SessionContext](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/SessionContext.java), [Checkpoint](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/Checkpoint.java), [ExecutionPlan](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/ExecutionPlan.java), [FrontendStep](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/FrontendStep.java)) feature complete Jackson `@JsonCreator`, `@JsonProperty`, and `@JsonIgnoreProperties(ignoreUnknown = true)` decorators, allowing safe interoperability across Spring Boot, Rails, and Redis DB 0:
 
 ```java
+// Fluent builder with clean separation of data, config, and transient attributes:
+SessionContext session = SessionContext.builder()
+    .data("userId", "user_12345")
+    .data("ip", "192.168.1.50")
+    .config("clientId", "banking-portal")
+    .config("requireMfa", true)
+    .build();
+
 // Persisting to Redis or encrypted cookie between turns:
 String sessionJson = objectMapper.writeValueAsString(plan.getUpdatedContext());
 String checkpointJson = objectMapper.writeValueAsString(plan.getCheckpoint());
 
 // Restoring on the next HTTP POST request:
-SessionContext session = objectMapper.readValue(sessionJson, SessionContext.class);
+SessionContext restoredSession = objectMapper.readValue(sessionJson, SessionContext.class);
 Checkpoint checkpoint = objectMapper.readValue(checkpointJson, Checkpoint.class);
 ```
 
@@ -558,7 +566,8 @@ The engine protects passwords, OTP codes, and client secrets from leaking to log
 
 ## Server-Driven UI & Localization Pattern
 
-For multi-language applications (e.g. Rails / Ruby UI frontends):
+Pathfinder enables pure Server-Driven UI (SDUI) rendering across web (Rails / React) and mobile clients:
+* **Dynamic CEL Template Resolution**: Titles, descriptions, and custom `data` (props) maps support `${data.variable}` or `${config.variable}` expressions, automatically evaluated before emitting `FrontendStep` (e.g. `step.getData().get("emailMasked")`).
 * **Emit Locale Keys**: Define schemas using translation keys (e.g. `title: "screens.otp.title"`, `description: "screens.otp.description"`).
 * **Client-Side Localization**: The frontend resolves text keys against its standard locale files (`en.yml`, `es.yml`) alongside any dynamic session attributes passed in the execution plan.
 
