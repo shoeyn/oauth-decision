@@ -1,0 +1,51 @@
+id: main_login_flow
+version: "1.0.0"
+name: "Primary Login Flow"
+initialState: assess_login_risk
+
+states:
+  assess_login_risk:
+    type: BACKEND
+    commands:
+      - id: fraud_check
+        service: fraud-engine
+        payload:
+          ip: "${data.ip}"
+          userId: "${data.userId}"
+    on:
+      - if: "results.fraud_check.riskScore >= 50"
+        target: invoke_mfa
+      - default: true
+        target: issue_standard_token
+
+  invoke_mfa:
+    type: SUBFLOW
+    subflow: reusable_otp_flow
+    on:
+      - outcome: SUCCESS
+        target: issue_stepup_token
+      - default: true
+        target: mfa_rejected
+
+  issue_standard_token:
+    type: TERMINAL
+    terminal:
+      status: SUCCESS
+      claims:
+        sub: "${data.userId}"
+        acr: "urn:auth:level1"
+
+  issue_stepup_token:
+    type: TERMINAL
+    terminal:
+      status: SUCCESS
+      claims:
+        sub: "${data.userId}"
+        acr: "urn:auth:level2"
+        mfa_method: "${data.mfaMethod}"
+
+  mfa_rejected:
+    type: TERMINAL
+    terminal:
+      status: DENIED
+      error: "Authentication failed: MFA challenge rejected"

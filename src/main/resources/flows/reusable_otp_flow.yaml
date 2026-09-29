@@ -1,0 +1,58 @@
+id: reusable_otp_flow
+version: "1.0.0"
+name: "Reusable One-Time Passcode Subflow"
+initialState: prompt_otp
+
+states:
+  prompt_otp:
+    type: FRONTEND
+    schemas:
+      - screenId: otp_entry_screen
+        title: "Two-Factor Verification Required"
+        description: "Enter the 6-digit passcode sent to your phone."
+        jsonSchema:
+          type: object
+          required:
+            - otpCode
+          properties:
+            otpCode:
+              type: string
+              pattern: "^[0-9]{6}$"
+              title: "6-Digit Security Code"
+        uiSchema:
+          otpCode:
+            "ui:widget": "otp"
+            "ui:placeholder": "123456"
+            "ui:autofocus": true
+    on:
+      - event: SUBMIT
+        target: verify_otp
+
+  verify_otp:
+    type: BACKEND
+    commands:
+      - id: verify_code
+        service: otp-service
+        payload:
+          userId: "${data.userId}"
+          code: "${input.otpCode}"
+    on:
+      - if: "results.verify_code.valid == true"
+        target: otp_success
+        contextUpdates:
+          mfaMethod: "'SMS_OTP'"
+      - default: true
+        target: otp_failed
+
+  otp_success:
+    type: TERMINAL
+    terminal:
+      status: SUCCESS
+      claims:
+        amr: ["pwd", "otp"]
+
+  otp_failed:
+    type: TERMINAL
+    terminal:
+      status: DENIED
+      error: "Invalid security passcode provided."

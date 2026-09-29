@@ -1,0 +1,45 @@
+id: parent_login_flow
+version: "1.0.0"
+name: "Parent Authentication & Authorization Flow"
+initialState: evaluate_policy
+
+states:
+  evaluate_policy:
+    type: DECISION_FORK
+    on:
+      - if: "data.blocked == true"
+        target: access_denied
+      - if: "config.requireMfa == true || data.riskScore > 50"
+        target: delegate_to_mfa
+      - default: true
+        target: issue_tokens
+
+  delegate_to_mfa:
+    type: SUBFLOW
+    subflow: mfa_totp_subflow
+    on:
+      - outcome: SUCCESS
+        target: issue_tokens
+      - default: true
+        target: mfa_rejected
+
+  issue_tokens:
+    type: TERMINAL
+    terminal:
+      status: SUCCESS
+      claims:
+        sub: "${data.userId}"
+        client_id: "${config.clientId}"
+        acr: "urn:pathfinder:auth:level2"
+
+  access_denied:
+    type: TERMINAL
+    terminal:
+      status: DENIED
+      error: "User is blocked from logging in."
+
+  mfa_rejected:
+    type: TERMINAL
+    terminal:
+      status: DENIED
+      error: "Multi-factor authentication was unsuccessful."

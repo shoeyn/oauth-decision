@@ -138,7 +138,16 @@ public class FlowSimulation {
         if (terminalResult != null) {
             sb.append("[Outcome] ").append(terminalResult.getStatus());
             if (terminalResult.getError() != null) {
-                sb.append(" (Error: ").append(terminalResult.getError()).append(")");
+                sb.append(" (Error: ").append(terminalResult.getError());
+                if (terminalResult.getErrorDescription() != null && !terminalResult.getErrorDescription().isBlank()) {
+                    sb.append(": ").append(terminalResult.getErrorDescription());
+                }
+                sb.append(")");
+            }
+            if (terminalResult.isRedirect()) {
+                sb.append(" [Redirect ➔ ").append(terminalResult.getRedirectUrl()).append("]");
+            } else if (terminalResult.isUiDropout()) {
+                sb.append(" [UI Dropout: Stays in UI]");
             }
             if (!terminalResult.getClaims().isEmpty()) {
                 sb.append(" Claims: ").append(terminalResult.getClaims());

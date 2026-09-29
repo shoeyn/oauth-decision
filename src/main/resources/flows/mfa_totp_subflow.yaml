@@ -1,0 +1,57 @@
+id: mfa_totp_subflow
+version: "1.0.0"
+name: "Reusable Time-Based One-Time Password (TOTP) Subflow"
+initialState: prompt_totp
+
+states:
+  prompt_totp:
+    type: FRONTEND
+    schemas:
+      - screenId: totp_screen
+        title: "Two-Factor Authentication Required"
+        description: "Please enter the 6-digit verification code from your authenticator app."
+        jsonSchema:
+          type: object
+          required:
+            - totpCode
+          properties:
+            totpCode:
+              type: string
+              pattern: "^[0-9]{6}$"
+              title: "Authenticator Code"
+        uiSchema:
+          totpCode:
+            "ui:widget": "otp"
+            "ui:placeholder": "123456"
+            "ui:autofocus": true
+    on:
+      - event: SUBMIT
+        target: verify_totp
+
+  verify_totp:
+    type: BACKEND
+    commands:
+      - id: verify_totp_code
+        service: mfa-verification-service
+        payload:
+          userId: "${data.userId}"
+          code: "${input.totpCode}"
+    on:
+      - if: "results.verify_totp_code.valid == true"
+        target: totp_success
+      - default: true
+        target: totp_failed
+
+  totp_success:
+    type: TERMINAL
+    terminal:
+      status: SUCCESS
+      claims:
+        amr: ["pwd", "otp"]
+        mfa_verified_at: "now"
+
+  totp_failed:
+    type: TERMINAL
+    terminal:
+      status: DENIED
+      error: "Invalid or expired authenticator code."

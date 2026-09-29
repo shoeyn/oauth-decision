@@ -306,6 +306,59 @@ states:
         target: show_consent_screen    # Defined in consent_screens.yaml
 ```
 
+### 4. Failure Dropouts: Redirect Failure URLs vs Hard UI Dropouts
+
+In OAuth and identity orchestration, flow dropouts fall into two distinct architectural patterns:
+
+#### A. Redirect Failure URL Dropout (e.g. User Denies Consent / Cancellation)
+The terminal state defines a `redirectUrl` (evaluated dynamically via Google CEL against client configuration, e.g. `config.redirectUri` or `config.failureUrl`). The host server issues an HTTP 302 redirect back to the client application with OAuth error parameters:
+
+```yaml
+  consent_cancelled:
+    type: TERMINAL
+    terminal:
+      status: DENIED
+      error: access_denied
+      errorDescription: "The user declined to grant consent to the application."
+      redirectUrl: "${config.redirectUri}?error=access_denied&error_description=User+declined+consent&state=${data.state}"
+```
+
+In the host application:
+```java
+TerminalResult term = plan.getTerminalResult();
+if (term.isRedirect()) {
+    // 302 Redirect user-agent back to client failure URL
+    response.sendRedirect(term.getRedirectUrl());
+}
+```
+
+#### B. Hard UI Dropout (e.g. Account Suspension / Fraud Lockout)
+When a fatal security violation occurs (brute-force lockout, fraud detection, blocked user, invalid client redirect URI), OAuth specifications require the authorization server **not** to redirect back to the client. Instead, it must stay in the UI and render a terminal error screen:
+
+```yaml
+  security_lockout:
+    type: TERMINAL
+    schemas:
+      - screenId: account_locked_screen
+        title: "Account Suspended"
+        description: "Your session has been terminated due to high-risk activity. Please contact security support."
+        jsonSchema:
+          type: object
+    terminal:
+      status: DENIED
+      error: account_locked
+      errorDescription: "High-risk fraud score detected."
+```
+
+In the host application:
+```java
+TerminalResult term = plan.getTerminalResult();
+if (term.isUiDropout()) {
+    // Stay in the UI: render the terminal error screen emitted in plan.getFrontendSteps()
+    renderTerminalErrorScreen(plan.getFrontendSteps());
+}
+```
+
 ---
 
 ## Java Host Integration
@@ -418,6 +471,44 @@ Sample Visual Trace Output:
     Transition ➔ issue_stepup_token
 [4] State: issue_stepup_token (TERMINAL)
 [Outcome] SUCCESS Claims: {sub=user_alice, acr=urn:pathfinder:auth:level2, amr=[pwd, otp]}
+```
+
+#### Subflow Simulation Across Parent & Child Flow Boundaries:
+```java
+// Simulating parent login flow calling reusable MFA subflow:
+SessionContext mfaSession = new SessionContext(
+    Map.of("userId", "carol", "riskScore", 10),
+    Map.of("clientId", "fintech_portal", "requireMfa", true)
+);
+
+Map<String, Object> mfaDecisions = Map.of(
+    "totpCode", "123456",
+    "verify_totp_code", Map.of("valid", true)
+);
+
+FlowSimulation subflowSim = engine.simulate("parent_login_flow", mfaSession, mfaDecisions);
+System.out.println(subflowSim.toVisualTrace());
+```
+
+Subflow Visual Trace Output:
+```text
+=== Flow Simulation Trace: parent_login_flow ===
+[1] State: evaluate_policy (DECISION_FORK)
+    Transition ➔ delegate_to_mfa
+[2] State: delegate_to_mfa (SUBFLOW)
+    Transition ➔ subflow:mfa_totp_subflow
+[3] State: prompt_totp (FRONTEND)
+    Screens (1):
+      • totp_screen ("Two-Factor Authentication Required")
+    Transition ➔ verify_totp
+[4] State: verify_totp (BACKEND)
+    Commands (1):
+      • verify_totp_code (service: mfa-verification-service)
+    Transition ➔ totp_success
+[5] State: totp_success (TERMINAL)
+    Transition ➔ return_to_parent
+[6] State: issue_tokens (TERMINAL)
+[Outcome] SUCCESS Claims: {sub=carol, client_id=fintech_portal, acr=urn:pathfinder:auth:level2}
 ```
 
 ---

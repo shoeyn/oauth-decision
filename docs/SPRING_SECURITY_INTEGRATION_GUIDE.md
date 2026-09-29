@@ -6,50 +6,58 @@ This guide details how to integrate the **Pathfinder Decision Engine** (`io.path
 
 ## 1. Architectural Topology & Sequence
 
-In an enterprise OAuth 2.1 deployment, user authentication, risk assessment, and step-up challenges occur before issuing an authorization code. Pathfinder provides the declarative orchestration engine for:
-1. Dynamic risk evaluation (e.g. device intelligence, IP fraud scores).
-2. Conditional multi-factor authentication (e.g. SMS OTP, WebAuthn/FIDO2, Push).
-3. Declarative consent screens and business authorization policies.
-4. Cryptographic claims issuance (embedding verified `acr`, `amr`, and custom claims into access and ID tokens).
+Pathfinder is a pure, domain-agnostic step compiler and decision engine. It does not touch databases, execute network calls, or depend on OAuth 2.1 abstractions. 
 
-### Component Flow
+In an enterprise OAuth deployment:
+1. **Dynamic Risk Assessment**: Evaluates IP, device, and behavioural scores via backend microservice steps.
+2. **Conditional Step-Up Challenges**: Bypasses or enforces multi-factor challenges based on user `data` and client `config`.
+3. **Reusable Subflows**: Delegated verification flows (e.g. Passkeys, SMS OTP, Biometrics) are invoked seamlessly and return to calling flows.
+4. **Server-Driven UI**: Emits JSON Schema and UI Schema descriptors for Rails or frontend clients to render.
+5. **Verified Claims Issuance**: Resolves final claims (`sub`, `acr`, `amr`) to be injected into JWTs by Spring Security's `OAuth2TokenCustomizer`.
 
 ```
 [ User Browser ]
        │
        ▼
-1. GET /oauth2/authorize?client_id=...&acr_values=urn:pathfinder:auth:level2
+1. GET /oauth2/authorize?client_id=portal&acr_values=urn:pathfinder:auth:level2
        │
        ▼
 [ Spring Authorization Server ] ── (Checks user session in Redis)
        │
-       ├──► [ Pathfinder WorkflowOrchestrator ]
+       ├──► [ Pathfinder DecisionEngine ]
        │         │
-       │         ├──► 2. Runs Command: 'check_device_risk' -> FraudEngineBean
-       │         │       (Risk score = 75 >= 30 -> requires step-up MFA)
-       │         │
-       │         └──► 3. Yields Checkpoint & FrontendStep: 'otp_entry_screen'
+       │         └──► 2. Emits Plan: BackendStep('check_device_risk')
        │
-       ▼ 4. Redirects to Rails IdP (/challenges/otp?tx=UUID)
+       ├──► 3. Spring dispatches to FraudEngineService -> riskScore = 75 (High)
+       │
+       ├──► 4. Resumes DecisionEngine.evaluate(..., Event.resume(results))
+       │         │
+       │         └──► 5. Yields Checkpoint & FrontendStep: 'otp_entry_screen'
+       │
+       ▼ 6. Persists context to Redis & redirects to Rails IdP (/challenges/otp?tx=UUID)
 [ Rails Identity Provider ]
        │
-       ├──► 5. Renders JSON Schema UI (6-digit OTP prompt)
+       ├──► 7. Renders JSON Schema UI (6-digit OTP prompt)
        │
-       ▼ 6. User submits OTP
+       ▼ 8. User submits OTP
 [ Rails Identity Provider ] ──► POST /api/challenges/otp { tx: UUID, otpCode: "123456" }
                                            │
                                            ▼
                             [ Spring Authorization Server ]
                                            │
-                                           ├──► [ Pathfinder WorkflowOrchestrator ]
+                                           ├──► Loads SessionContext & Checkpoint from Redis
+                                           │
+                                           ├──► [ Pathfinder DecisionEngine ]
                                            │         │
                                            │         ├──► Validates JSON Schema & Scopes Input
-                                           │         ├──► Runs Command: 'verify_code' -> OtpServiceBean
+                                           │         ├──► Emits BackendStep: 'verify_code'
+                                           │         │       └──► Spring executes OtpService -> valid: true
                                            │         └──► Terminal: SUCCESS (acr: level2, amr: ["pwd","otp"])
                                            │
                                            ▼
                             [ Spring Authorization Server ]
                                            │
+                                           ├──► Injects verified claims in OAuth2TokenCustomizer
                                            ├──► Persists Grant to PostgreSQL
                                            └──► Mints JARM Authorization Response (code=...)
 ```
@@ -58,18 +66,14 @@ In an enterprise OAuth 2.1 deployment, user authentication, risk assessment, and
 
 ## 2. Core Integration Components in Pathfinder
 
-Pathfinder provides first-class primitives designed specifically for clustered Spring Security environments:
-
 | Component | Class | Description |
 |---|---|---|
-| **Workflow Orchestrator** | `io.pathfinder.engine.core.WorkflowOrchestrator` | Coordinates state transitions, automatically executing backend Spring beans until interactive user input or a terminal outcome is reached. |
-| **Command Execution SPI** | `io.pathfinder.engine.command.CommandHandler` | `@FunctionalInterface` allowing Spring `@Component` beans to handle backend microservice commands. |
-| **Command Registry** | `io.pathfinder.engine.command.CommandRegistry` | Registry mapping command service names (e.g. `fraud-engine`, `otp-service`) to their handlers. |
-| **State Persistence SPI** | `io.pathfinder.engine.persistence.FlowStateRepository` | High-availability persistence contract for saving suspended workflow states in **Redis** with TTL. |
-| **Flow State DTO** | `io.pathfinder.engine.persistence.FlowState` | Jackson 3 serializable snapshot containing execution state, `SessionContext`, and checkpoints. |
-| **Safe Input Scoping** | `io.pathfinder.engine.core.DecisionEngine` | Automatically prevents Mass Assignment (CWE-915) by isolating untrusted submitted form inputs and protecting server-verified context keys from overwrites. |
+| **Decision Engine** | `io.pathfinder.engine.core.DecisionEngine` | Pure functional look-ahead compiler evaluating state charts and CEL conditions. |
+| **Session Context** | `io.pathfinder.engine.runtime.SessionContext` | Immutable snapshot of runtime user `data`, client `config`, transient attributes, and execution call stack. |
+| **Flow Simulation** | `io.pathfinder.engine.runtime.FlowSimulation` | Full trajectory path projection tool (`engine.simulate(flow, context, decisions)`). |
+| **Safe Input Scoping** | `DecisionEngine` | Automatically prevents Mass Assignment (CWE-915) by verifying declared JSON Schema properties. |
 | **Attempt Limiting** | `StateDefinition.getMaxAttempts()` | Built-in brute-force protection with configurable `onError` fallback transitions. |
-| **OAuth 2.1 Claims Bridge** | `io.pathfinder.engine.oauth2.OAuth2FlowContextHelper` | Translates OAuth 2.1 parameters to `SessionContext` and extracts `acr` and `amr` claims from `TerminalResult`. |
+| **Flow Registry** | `io.pathfinder.engine.registry.FlowRegistry` | Pluggable flow discovery via `ClasspathFlowRegistry` or `FileSystemFlowRegistry`. |
 
 ---
 
@@ -96,152 +100,73 @@ Create `com.example.authserver.config.PathfinderConfig`:
 ```java
 package com.example.authserver.config;
 
-import io.pathfinder.engine.command.CommandHandler;
-import io.pathfinder.engine.command.CommandRegistry;
-import io.pathfinder.engine.command.InMemoryCommandRegistry;
 import io.pathfinder.engine.core.DecisionEngine;
-import io.pathfinder.engine.core.WorkflowOrchestrator;
-import io.pathfinder.engine.persistence.FlowState;
-import io.pathfinder.engine.persistence.FlowStateRepository;
 import io.pathfinder.engine.registry.ClasspathFlowRegistry;
 import io.pathfinder.engine.registry.FlowRegistry;
-import java.time.Duration;
-import java.util.Map;
-import java.util.Optional;
-import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 @Configuration(proxyBeanMethods = false)
 public class PathfinderConfig {
 
   @Bean
   public FlowRegistry pathfinderFlowRegistry() {
-    ClasspathFlowRegistry registry = new ClasspathFlowRegistry();
-    // Auto-load step-up flow
-    registry.registerResource("/flows/oauth_stepup_auth.yaml");
-    return registry;
-  }
-
-  @Bean
-  public CommandRegistry pathfinderCommandRegistry(ApplicationContext applicationContext) {
-    CommandRegistry registry = new InMemoryCommandRegistry();
-    // Automatically register any Spring bean annotated with @PathfinderService or implementing CommandHandler
-    Map<String, CommandHandler> beans = applicationContext.getBeansOfType(CommandHandler.class);
-    beans.forEach((beanName, handler) -> registry.register(beanName, handler));
-    return registry;
+    return new ClasspathFlowRegistry()
+        .withResource("/flows/oauth_stepup_auth.yaml")
+        .withResource("/flows/parent_login_flow.yaml")
+        .withResource("/flows/mfa_totp_subflow.yaml");
   }
 
   @Bean
   public DecisionEngine pathfinderDecisionEngine(FlowRegistry flowRegistry) {
     return new DecisionEngine(flowRegistry);
   }
-
-  @Bean
-  public WorkflowOrchestrator pathfinderWorkflowOrchestrator(
-      DecisionEngine decisionEngine, CommandRegistry commandRegistry) {
-    return new WorkflowOrchestrator(decisionEngine, commandRegistry);
-  }
-
-  /**
-   * Distributed Redis repository for persisting in-flight workflow instances across horizontal cluster nodes.
-   */
-  @Bean
-  public FlowStateRepository pathfinderFlowStateRepository(
-      StringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
-
-    ObjectMapper mapper = objectMapper != null ? objectMapper : JsonMapper.shared();
-
-    return new FlowStateRepository() {
-      private static final String PREFIX = "pathfinder:flow:";
-
-      @Override
-      public void save(String flowInstanceId, FlowState state, Duration ttl) {
-        try {
-          String json = mapper.writeValueAsString(state);
-          redisTemplate.opsForValue().set(PREFIX + flowInstanceId, json, ttl);
-        } catch (Exception e) {
-          throw new IllegalStateException("Failed to persist flow state to Redis: " + e.getMessage(), e);
-        }
-      }
-
-      @Override
-      public Optional<FlowState> find(String flowInstanceId) {
-        String json = redisTemplate.opsForValue().get(PREFIX + flowInstanceId);
-        if (json == null || json.isBlank()) {
-          return Optional.empty();
-        }
-        try {
-          return Optional.of(mapper.readValue(json, FlowState.class));
-        } catch (Exception e) {
-          return Optional.empty();
-        }
-      }
-
-      @Override
-      public void delete(String flowInstanceId) {
-        redisTemplate.delete(PREFIX + flowInstanceId);
-      }
-    };
-  }
 }
 ```
 
 ---
 
-### Step 3: Implement Backend Command Handlers as Spring Beans
+### Step 3: Implement Backend Command Dispatching
 
-Declare your business microservice beans:
-
-```java
-package com.example.authserver.service;
-
-import io.pathfinder.engine.command.CommandHandler;
-import java.util.Map;
-import org.springframework.stereotype.Component;
-
-@Component("fraud-engine")
-public class FraudEngineCommandHandler implements CommandHandler {
-
-  @Override
-  public Map<String, Object> execute(Map<String, Object> payload) {
-    String userId = (String) payload.get("userId");
-    String ip = (String) payload.get("ip");
-
-    // Evaluate risk via device intelligence / anomaly detection
-    int riskScore = calculateRisk(userId, ip);
-
-    return Map.of("riskScore", (long) riskScore);
-  }
-
-  private int calculateRisk(String userId, String ip) {
-    // Example: flag high risk if IP is unknown
-    return "127.0.0.1".equals(ip) ? 15 : 75;
-  }
-}
-```
-
-And OTP verification:
+Pathfinder emits pure `BackendStep` descriptors containing `service` and `payload`. The host Spring service executes these using Spring-managed beans:
 
 ```java
 package com.example.authserver.service;
 
-import io.pathfinder.engine.command.CommandHandler;
+import io.pathfinder.engine.runtime.BackendStep;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import org.springframework.stereotype.Component;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
 
-@Component("otp-service")
-public class OtpVerificationCommandHandler implements CommandHandler {
+@Service
+@RequiredArgsConstructor
+public class StepExecutionService {
 
-  @Override
-  public Map<String, Object> execute(Map<String, Object> payload) {
-    String code = (String) payload.get("code");
-    // Verify against one-time passcode store
-    boolean isValid = "123456".equals(code);
-    return Map.of("valid", isValid);
+  private final FraudEngineClient fraudEngineClient;
+  private final OtpService otpService;
+  private final UserDirectoryService userDirectoryService;
+
+  public Map<String, Object> executeBackendSteps(List<BackendStep> steps) {
+    Map<String, Object> results = new HashMap<>();
+
+    for (BackendStep step : steps) {
+      Map<String, Object> payload = step.getPayload();
+      Map<String, Object> stepResult = switch (step.getService()) {
+        case "fraud-engine" ->
+            Map.of("riskScore", fraudEngineClient.calculateRisk((String) payload.get("userId"), (String) payload.get("ip")));
+        case "otp-service" ->
+            Map.of("valid", otpService.verifyCode((String) payload.get("userId"), (String) payload.get("code")));
+        case "user-directory" ->
+            userDirectoryService.fetchProfile((String) payload.get("userId"));
+        default ->
+            throw new IllegalArgumentException("Unknown backend service: " + step.getService());
+      };
+      results.put(step.getStepId(), stepResult);
+    }
+
+    return results;
   }
 }
 ```
@@ -255,11 +180,8 @@ Create a Spring Security filter or endpoint to enforce Pathfinder workflows befo
 ```java
 package com.example.authserver.security;
 
-import io.pathfinder.engine.core.WorkflowOrchestrator;
-import io.pathfinder.engine.oauth2.OAuth2ClaimConstants;
-import io.pathfinder.engine.oauth2.OAuth2FlowContextHelper;
-import io.pathfinder.engine.persistence.FlowState;
-import io.pathfinder.engine.persistence.FlowStateRepository;
+import com.example.authserver.service.StepExecutionService;
+import io.pathfinder.engine.core.DecisionEngine;
 import io.pathfinder.engine.runtime.*;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -270,21 +192,27 @@ import java.time.Duration;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 @Slf4j
 @RequiredArgsConstructor
 public class PathfinderStepUpAuthorizationFilter extends OncePerRequestFilter {
 
-  private final WorkflowOrchestrator orchestrator;
-  private final FlowStateRepository stateRepository;
+  private final DecisionEngine engine;
+  private final StepExecutionService stepExecutionService;
+  private final StringRedisTemplate redisTemplate;
   private final String railsChallengeUrl;
+  private final ObjectMapper objectMapper = JsonMapper.builder().build();
+
+  private static final String REDIS_PREFIX = "pathfinder:tx:";
 
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {
-    // Only intercept interactive OAuth 2.1 authorization requests
     return !request.getRequestURI().startsWith("/oauth2/authorize");
   }
 
@@ -299,56 +227,101 @@ public class PathfinderStepUpAuthorizationFilter extends OncePerRequestFilter {
       return;
     }
 
-    // Check if client requested a step-up workflow (e.g. acr_values=urn:pathfinder:auth:level2)
-    String acrValues = request.getParameter("acr_values");
     String clientId = request.getParameter("client_id");
     String txId = request.getParameter("flow_tx");
 
-    // 1. Resuming existing workflow
+    // 1. Resuming existing workflow from interactive challenge submission
     if (txId != null && !txId.isBlank()) {
-      Optional<FlowState> savedState = stateRepository.find(txId);
-      if (savedState.isPresent()) {
-        FlowState state = savedState.get();
-        if (state.getCheckpoint() != null && state.getCheckpoint().isTerminal()) {
-          filterChain.doFilter(request, response);
-          return;
-        }
+      String cachedJson = redisTemplate.opsForValue().get(REDIS_PREFIX + txId);
+      if (cachedJson != null) {
+        FlowTransaction tx = objectMapper.readValue(cachedJson, FlowTransaction.class);
+        request.setAttribute("PATHFINDER_CLAIMS", tx.claims());
+        filterChain.doFilter(request, response);
+        return;
       }
     }
 
-    // 2. Initialize initial flow context
-    SessionContext context =
-        OAuth2FlowContextHelper.createInitialContext(
-            clientId,
-            auth.getName(),
-            List.of(request.getParameter("scope") != null ? request.getParameter("scope").split(" ") : new String[0]),
-            acrValues,
-            Map.of("ip", request.getRemoteAddr())
-        );
+    // 2. Initialize Pathfinder session with clean data and client config separation
+    Map<String, Object> sessionData = Map.of(
+        "userId", auth.getName(),
+        "ip", request.getRemoteAddr()
+    );
 
-    ExecutionPlan plan = orchestrator.run("oauth-stepup-auth", null, context, Event.start());
+    Map<String, Object> clientConfig = Map.of(
+        "clientId", clientId != null ? clientId : "default",
+        "requireMfa", "urn:pathfinder:auth:level2".equalsIgnoreCase(request.getParameter("acr_values"))
+    );
 
-    // 3. If plan halted at a frontend challenge, persist to Redis & redirect to Rails IdP
+    SessionContext session = new SessionContext(sessionData, clientConfig);
+
+    // 3. Initial evaluation turn
+    ExecutionPlan plan = engine.evaluate("oauth-stepup-auth", null, session, Event.start());
+
+    // 4. Execution loop: dispatch backend steps until a checkpoint or terminal state
+    while (!plan.isTerminal() && plan.hasBackendSteps() && !plan.hasFrontendSteps()) {
+      Map<String, Object> results = stepExecutionService.executeBackendSteps(plan.getBackendSteps());
+      plan = engine.evaluate(
+          "oauth-stepup-auth",
+          plan.getCheckpoint().getResumeState(),
+          plan.getUpdatedContext(),
+          Event.resume(results)
+      );
+    }
+
+    // 5. If terminal, handle success, failure redirect, or hard UI dropout
+    if (plan.isTerminal()) {
+      TerminalResult term = plan.getTerminalResult();
+
+      // Case A: Terminal Success -> attach verified claims for OAuth2TokenCustomizer
+      if ("SUCCESS".equalsIgnoreCase(term.getStatus())) {
+        request.setAttribute("PATHFINDER_CLAIMS", term.getClaims());
+        filterChain.doFilter(request, response);
+        return;
+      }
+
+      // Case B: Redirect Failure URL Dropout (e.g. user denied consent, client cancellation URL)
+      if (term.isRedirect()) {
+        log.warn("OAuth flow terminated with redirect failure to: {}", term.getRedirectUrl());
+        response.sendRedirect(term.getRedirectUrl());
+        return;
+      }
+
+      // Case C: Hard UI Dropout (e.g. account suspension, fraud lockout, brute-force max attempts)
+      if (term.isUiDropout()) {
+        log.error("OAuth flow terminated with hard UI lockout: {}", term.getErrorDescription());
+        FrontendStep lockoutScreen = plan.getFrontendSteps().isEmpty() ? null : plan.getFrontendSteps().getFirst();
+        request.setAttribute("LOCKOUT_SCREEN", lockoutScreen);
+        request.setAttribute("ERROR_DESCRIPTION", term.getErrorDescription());
+        request.getRequestDispatcher("/auth/lockout").forward(request, response);
+        return;
+      }
+
+      // Fallback fail-closed
+      response.sendError(HttpServletResponse.SC_FORBIDDEN, "Authorization step-up policy denied access");
+      return;
+    }
+
+    // 6. If plan halted at an interactive frontend challenge, persist to Redis & redirect to Rails IdP
     if (plan.hasFrontendSteps()) {
       String newTx = UUID.randomUUID().toString();
-      FlowState state = new FlowState(newTx, "oauth-stepup-auth", plan.getCurrentState(), plan.getUpdatedContext(), plan.getCheckpoint());
-      stateRepository.save(newTx, state, Duration.ofMinutes(10));
+      FlowTransaction tx = new FlowTransaction(
+          newTx,
+          plan.getCheckpoint().getResumeState(),
+          plan.getUpdatedContext(),
+          Collections.emptyMap()
+      );
+      redisTemplate.opsForValue().set(REDIS_PREFIX + newTx, objectMapper.writeValueAsString(tx), Duration.ofMinutes(10));
 
       String returnUrl = request.getRequestURL() + "?" + request.getQueryString() + "&flow_tx=" + newTx;
       response.sendRedirect(railsChallengeUrl + "?tx=" + newTx + "&return_to=" + java.net.URLEncoder.encode(returnUrl, java.nio.charset.StandardCharsets.UTF_8));
       return;
     }
 
-    // 4. If terminal success, attach verified claims to request for TokenCustomizerConfig
-    if (plan.isTerminal() && "SUCCESS".equalsIgnoreCase(plan.getTerminalResult().getStatus())) {
-      request.setAttribute("PATHFINDER_CLAIMS", plan.getTerminalResult().getClaims());
-      filterChain.doFilter(request, response);
-      return;
-    }
-
-    // 5. Fail-closed on denial or error
+    // Fallback fail-closed
     response.sendError(HttpServletResponse.SC_FORBIDDEN, "Authorization step-up policy denied access");
   }
+
+  public record FlowTransaction(String txId, String resumeState, SessionContext context, Map<String, Object> claims) {}
 }
 ```
 
@@ -356,34 +329,223 @@ public class PathfinderStepUpAuthorizationFilter extends OncePerRequestFilter {
 
 ### Step 5: Minting Verified Claims in `TokenCustomizerConfig`
 
-Update [TokenCustomizerConfig.java](file:///Users/nathanshoemark/SpringSecurity/spring-auth-server/src/main/java/com/example/authserver/config/TokenCustomizerConfig.java) to inject claims verified by Pathfinder:
+Update Spring Security's `OAuth2TokenCustomizer` to inject claims verified by Pathfinder into issued access and ID tokens:
 
 ```java
-// Inside TokenCustomizerConfig.java:
+package com.example.authserver.config;
 
-@SuppressWarnings("unchecked")
-Map<String, Object> pathfinderClaims = (Map<String, Object>) context.get(OAuth2TokenContext.class)
-    .getAttribute("PATHFINDER_CLAIMS");
+import java.util.List;
+import java.util.Map;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
 
-if (pathfinderClaims != null) {
-  // Inject verified Authentication Context Class Reference (acr)
-  if (pathfinderClaims.containsKey(OAuth2ClaimConstants.ACR)) {
-    context.getClaims().claim("acr", pathfinderClaims.get(OAuth2ClaimConstants.ACR));
-  }
-  // Inject Authentication Methods References (amr)
-  if (pathfinderClaims.containsKey(OAuth2ClaimConstants.AMR)) {
-    context.getClaims().claim("amr", pathfinderClaims.get(OAuth2ClaimConstants.AMR));
+@Configuration(proxyBeanMethods = false)
+public class TokenCustomizerConfig {
+
+  @Bean
+  @SuppressWarnings("unchecked")
+  public OAuth2TokenCustomizer<JwtEncodingContext> pathfinderTokenCustomizer() {
+    return (context) -> {
+      Map<String, Object> claims = (Map<String, Object>) context.get(HttpServletRequest.class)
+          .getAttribute("PATHFINDER_CLAIMS");
+
+      if (claims != null) {
+        if (claims.containsKey("acr")) {
+          context.getClaims().claim("acr", claims.get("acr"));
+        }
+        if (claims.containsKey("amr")) {
+          context.getClaims().claim("amr", claims.get("amr"));
+        }
+      }
+    };
   }
 }
 ```
 
 ---
 
-## 4. Security Hardening & Defenses
+## 5. Handling Flow Dropouts: Redirect Failure URLs vs Hard UI Dropouts
 
-1. **Mass-Assignment / Context Injection Defense (CWE-915)**:
-   Pathfinder inspects `FrontendSchemaDefinition.getJsonSchema()` declared `properties`. Any undeclared parameters submitted by the browser are safely filtered out, and server-set context keys (`userId`, `roles`, `riskScore`) can **never** be overwritten by client payloads.
-2. **Brute-Force & Rate-Limiting Protection**:
-   Interactive states configured with `maxAttempts: 3` track attempts in `SessionContext.getAttemptCount(stateId)`. When attempts exceed the limit, Pathfinder automatically branches to `onError: lockout_state` or yields a `TerminalResult("DENIED")`.
-3. **Fail-Closed Command Execution**:
-   If any backend `CommandHandler` throws an unhandled exception or times out, Pathfinder immediately fails closed with `TerminalResult("ERROR")` unless an explicit `onError` target state is declared.
+In OAuth 2.1 and identity orchestration, flow termination due to an error, policy rejection, or cancellation falls into **two distinct architectural patterns**:
+
+```
+                       ┌─────────────────────────┐
+                       │ Pathfinder Evaluator /  │
+                       │   Terminal State        │
+                       └────────────┬────────────┘
+                                    │
+           ┌────────────────────────┴────────────────────────┐
+           ▼                                                 ▼
+[ Redirect Failure URL ]                          [ Hard UI Dropout ]
+• term.isRedirect() == true                       • term.isUiDropout() == true
+• action: REDIRECT                                • action: UI_DROPOUT
+• RFC 6749 Section 4.1.2.1                        • Security Lockout (OWASP/RFC 6819)
+• User declined consent or cancelled              • Account suspended, brute-force, fraud
+• 302 Redirect to Client App                      • Browser STAYS in UI (no redirect)
+• Returns ?error=access_denied&state=xyz          • Renders terminal lockout screen
+```
+
+### Pattern 1: Redirect Failure URL (RFC 6749 Section 4.1.2.1)
+
+When a user legitimately cancels or declines a step (such as rejecting consent or cancelling WebAuthn passkey registration), OAuth 2.1 requires the Authorization Server to redirect the user-agent back to the client application's registered `redirect_uri` with standard error query parameters:
+* `error`: Standard OAuth 2.1 error code (e.g. `access_denied`, `login_required`, `consent_required`).
+* `error_description`: Human-readable error message.
+* `state`: The client application's anti-CSRF state parameter passed in the original authorization request.
+
+#### YAML Definition with CEL Dynamic Interpolation
+```yaml
+  consent_rejected:
+    type: TERMINAL
+    terminal:
+      status: DENIED
+      error: access_denied
+      errorDescription: "The resource owner denied the consent request."
+      redirectUrl: "${config.redirectUri}?error=access_denied&error_description=User+declined+consent&state=${data.state}"
+```
+
+#### Spring Security Host Handling
+```java
+TerminalResult term = plan.getTerminalResult();
+if (term.isRedirect()) {
+    log.info("Redirecting back to client failure URL: {}", term.getRedirectUrl());
+    response.sendRedirect(term.getRedirectUrl());
+    return;
+}
+```
+
+---
+
+### Pattern 2: Hard UI Dropout (Fatal Security Lockouts)
+
+Under RFC 6819 and OWASP security guidelines, when a **fatal security event** occurs, the Authorization Server **MUST NOT** redirect the browser back to the client application. Doing so would leak security state, expose the user to open-redirect risks, or inform an adversary about brute-force lockout thresholds.
+
+Fatal security events include:
+* Exceeding maximum failed OTP / password attempts (`maxAttempts` exceeded).
+* Fraud risk score exceeding maximum threshold (`riskScore >= 90`).
+* Account frozen, banned, or marked for investigation.
+* Mismatched or invalid client `redirect_uri`.
+
+For these events, Pathfinder stays in the UI by emitting a terminal `schemas:` block alongside `status: DENIED`.
+
+#### YAML Definition with Terminal UI Schema
+```yaml
+  account_lockout:
+    type: TERMINAL
+    schemas:
+      - screenId: account_suspended_screen
+        title: "Account Suspended"
+        description: "Your account has been locked due to excessive failed verification attempts. Please contact security support."
+        jsonSchema:
+          type: object
+    terminal:
+      status: DENIED
+      action: UI_DROPOUT
+      error: account_locked
+      errorDescription: "Maximum verification attempts exceeded."
+```
+
+#### Spring Security / MVC Controller Handling
+```java
+TerminalResult term = plan.getTerminalResult();
+if (term.isUiDropout()) {
+    log.error("Hard UI Dropout triggered: error={}, desc={}", term.getError(), term.getErrorDescription());
+    
+    // Terminal UI screens are preserved in plan.getFrontendSteps()
+    FrontendStep lockoutScreen = plan.getFrontendSteps().isEmpty() ? null : plan.getFrontendSteps().getFirst();
+    
+    request.setAttribute("lockoutScreen", lockoutScreen);
+    request.setAttribute("errorMessage", term.getErrorDescription());
+    request.getRequestDispatcher("/WEB-INF/views/lockout.jsp").forward(request, response);
+    return;
+}
+```
+
+---
+
+## 6. Testing & Flow Simulation in CI/CD
+
+Spring applications can use Pathfinder's `simulate(...)` method in unit and integration tests to verify both happy paths and dropout trajectories without launching a server:
+
+### A. Testing Happy Path
+```java
+@Test
+void verifyHighRiskStepUpAuthenticationPath() {
+    SessionContext context = new SessionContext(
+        Map.of("userId", "alice", "riskScore", 75), // High risk
+        Map.of("clientId", "banking_app", "requireMfa", true)
+    );
+
+    Map<String, Object> decisions = Map.of(
+        "check_device_risk", Map.of("riskScore", 75),
+        "otp_entry_screen", Map.of("otpCode", "123456"),
+        "verify_code", Map.of("valid", true)
+    );
+
+    FlowSimulation sim = engine.simulate("oauth-stepup-auth", context, decisions);
+
+    assertThat(sim.isSuccess()).isTrue();
+    assertThat(sim.getExecutionPath()).containsExactly(
+        "evaluate_auth",
+        "trigger_stepup_mfa",
+        "verify_otp",
+        "issue_stepup_token"
+    );
+    assertThat(sim.getTerminalResult().getClaims()).containsEntry("acr", "urn:pathfinder:auth:level2");
+}
+```
+
+### B. Testing Redirect Failure URL Dropout
+```java
+@Test
+void verifyConsentRejectionRedirectDropout() {
+    SessionContext context = new SessionContext(
+        Map.of("userId", "bob", "state", "xyz987"),
+        Map.of("redirectUri", "https://client.example.com/callback")
+    );
+
+    Map<String, Object> decisions = Map.of(
+        "consent_screen", Map.of("action", "DECLINE")
+    );
+
+    FlowSimulation sim = engine.simulate("oauth_consent_flow", context, decisions);
+
+    assertThat(sim.isCompleted()).isTrue();
+    assertThat(sim.isSuccess()).isFalse();
+    
+    TerminalResult term = sim.getTerminalResult();
+    assertThat(term.isRedirect()).isTrue();
+    assertThat(term.getRedirectUrl())
+        .isEqualTo("https://client.example.com/callback?error=access_denied&error_description=User+declined+consent&state=xyz987");
+}
+```
+
+### C. Testing Hard UI Dropout
+```java
+@Test
+void verifyFraudLockoutHardUiDropout() {
+    SessionContext context = new SessionContext(
+        Map.of("userId", "mallory", "ip", "203.0.113.1"),
+        Map.of("clientId", "portal")
+    );
+
+    Map<String, Object> decisions = Map.of(
+        "calculate_fraud_score", Map.of("score", 95) // Critical fraud score
+    );
+
+    FlowSimulation sim = engine.simulate("oauth-stepup-auth", context, decisions);
+
+    assertThat(sim.isCompleted()).isTrue();
+    assertThat(sim.isSuccess()).isFalse();
+
+    TerminalResult term = sim.getTerminalResult();
+    assertThat(term.isUiDropout()).isTrue();
+    assertThat(term.getError()).isEqualTo("account_locked");
+    assertThat(term.getRedirectUrl()).isNull();
+
+    // Verify the terminal error screen was emitted
+    assertThat(sim.getScreens()).extracting("screenId")
+        .contains("account_suspended_screen");
+}
+```

@@ -221,6 +221,42 @@ public class DecisionEngine {
                         : new TerminalConfig("SUCCESS", Collections.emptyMap(), null);
 
                 Map<String, Object> resolvedClaims = celEvaluator.resolveTemplateMap(tc.getClaims(), bindings);
+                Object resolvedRedirect = celEvaluator.resolveTemplateValue(tc.getRedirectUrl(), bindings);
+                String resolvedRedirectUrl = resolvedRedirect != null ? resolvedRedirect.toString() : null;
+                Object resolvedErrorDesc = celEvaluator.resolveTemplateValue(tc.getErrorDescription(), bindings);
+                String errorDescription = resolvedErrorDesc != null ? resolvedErrorDesc.toString() : null;
+
+                String action = tc.getAction();
+                if (action == null || action.isBlank()) {
+                    if (resolvedRedirectUrl != null && !resolvedRedirectUrl.isBlank()) {
+                        action = TerminalResult.ACTION_REDIRECT;
+                    } else if (!currentState.getFrontendSchemas().isEmpty()) {
+                        action = TerminalResult.ACTION_UI;
+                    } else {
+                        action = TerminalResult.ACTION_COMPLETE;
+                    }
+                }
+
+                // If this terminal state has frontend schemas (e.g. hard UI dropout screen), accumulate them!
+                for (FrontendSchemaDefinition schemaDef : currentState.getFrontendSchemas()) {
+                    planBuilder.addFrontendStep(new FrontendStep(
+                            schemaDef.getScreenId(),
+                            schemaDef.getTitle(),
+                            schemaDef.getDescription(),
+                            schemaDef.getJsonSchema(),
+                            schemaDef.getUiSchema(),
+                            Collections.emptyList()
+                    ));
+                }
+
+                TerminalResult termResult = new TerminalResult(
+                        tc.getStatus(),
+                        resolvedClaims,
+                        tc.getError(),
+                        errorDescription,
+                        resolvedRedirectUrl,
+                        action
+                );
 
                 // If executing within a subflow, pop call stack and return to parent flow
                 if (activeContext.hasCallStack()) {
@@ -245,6 +281,12 @@ public class DecisionEngine {
                     if (tc.getError() != null) {
                         subflowResult.put("error", tc.getError());
                     }
+                    if (errorDescription != null) {
+                        subflowResult.put("errorDescription", errorDescription);
+                    }
+                    if (resolvedRedirectUrl != null) {
+                        subflowResult.put("redirectUrl", resolvedRedirectUrl);
+                    }
                     bindings.put("subflow", subflowResult);
                     bindings.put("outcome", tc.getStatus());
                     bindings.put("results", Map.of("subflow", subflowResult));
@@ -265,7 +307,7 @@ public class DecisionEngine {
                     }
                 } else {
                     // Top-level terminal outcome
-                    planBuilder.terminal(new TerminalResult(tc.getStatus(), resolvedClaims, tc.getError()));
+                    planBuilder.terminal(termResult);
                     break;
                 }
             }
@@ -506,6 +548,30 @@ public class DecisionEngine {
                         : new TerminalConfig("SUCCESS", Collections.emptyMap(), null);
 
                 Map<String, Object> resolvedClaims = celEvaluator.resolveTemplateMap(tc.getClaims(), bindings);
+                Object resolvedRedirect = celEvaluator.resolveTemplateValue(tc.getRedirectUrl(), bindings);
+                String resolvedRedirectUrl = resolvedRedirect != null ? resolvedRedirect.toString() : null;
+                Object resolvedErrorDesc = celEvaluator.resolveTemplateValue(tc.getErrorDescription(), bindings);
+                String errorDescription = resolvedErrorDesc != null ? resolvedErrorDesc.toString() : null;
+
+                String action = tc.getAction();
+                if (action == null || action.isBlank()) {
+                    if (resolvedRedirectUrl != null && !resolvedRedirectUrl.isBlank()) {
+                        action = TerminalResult.ACTION_REDIRECT;
+                    } else if (!frontendSteps.isEmpty()) {
+                        action = TerminalResult.ACTION_UI;
+                    } else {
+                        action = TerminalResult.ACTION_COMPLETE;
+                    }
+                }
+
+                TerminalResult stepTerminal = new TerminalResult(
+                        tc.getStatus(),
+                        resolvedClaims,
+                        tc.getError(),
+                        errorDescription,
+                        resolvedRedirectUrl,
+                        action
+                );
 
                 if (activeContext.hasCallStack()) {
                     recordedSteps.add(new SimulationStep(
@@ -535,6 +601,12 @@ public class DecisionEngine {
                     if (tc.getError() != null) {
                         subflowResult.put("error", tc.getError());
                     }
+                    if (errorDescription != null) {
+                        subflowResult.put("errorDescription", errorDescription);
+                    }
+                    if (resolvedRedirectUrl != null) {
+                        subflowResult.put("redirectUrl", resolvedRedirectUrl);
+                    }
                     bindings.put("subflow", subflowResult);
                     bindings.put("outcome", tc.getStatus());
                     accumulatedResults.put("subflow", subflowResult);
@@ -551,7 +623,7 @@ public class DecisionEngine {
                         break;
                     }
                 } else {
-                    terminalResult = new TerminalResult(tc.getStatus(), resolvedClaims, tc.getError());
+                    terminalResult = stepTerminal;
                     recordedSteps.add(new SimulationStep(
                             stepNumber,
                             currentStateId,

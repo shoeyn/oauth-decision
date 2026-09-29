@@ -141,3 +141,104 @@ Powered by Google CEL (`dev.cel:cel`).
 * **Number Normalization**: Automatically promotes Java integer types (`Integer`, `Short`, `Byte`) to `Long` (`int64`) for seamless CEL numeric comparisons (`data.riskScore < 50`).
 * **Safe Evaluation**: Unresolved variables evaluate gracefully to `false` in conditions rather than crashing the engine.
 * **Program Cache**: In-memory `ConcurrentHashMap` with thread-safe compilation.
+
+---
+
+### F. Failure Dropouts: Redirect Failure URLs vs Hard UI Dropouts
+
+When an error, user cancellation, or security violation occurs, Pathfinder provides first-class support for two distinct terminal dropout patterns:
+
+```
++-----------------------------------------------------------------------------------+
+|                            TERMINAL STATE OUTCOMES                                |
++------------------------------------------+----------------------------------------+
+| 1. Redirect Failure URL                  | 2. Hard UI Dropout                     |
+| (RFC 6749 Section 4.1.2.1)               | (Fatal Security / Fraud Lockout)       |
++------------------------------------------+----------------------------------------+
+| • User declined consent or cancelled     | • Brute-force max attempts exceeded    |
+| • 302 Redirect to Client redirectUri     | • Risk/fraud threshold exceeded        |
+| • Returns error & state query params     | • Stays in UI; NO redirect to client   |
+| • Evaluated via dynamic CEL template     | • Emits terminal error UI Schema       |
+| • terminalResult.isRedirect() == true    | • terminalResult.isUiDropout() == true |
++------------------------------------------+----------------------------------------+
+```
+
+#### 1. Redirect Failure URL (`terminalResult.isRedirect()`)
+
+The terminal state declares a `redirectUrl` (or aliases `redirect_url`, `failureUrl`, `failure_url`). The URL string is parsed through Google CEL, dynamically interpolating `config` and `data` parameters:
+
+```yaml
+states:
+  consent_declined:
+    type: TERMINAL
+    terminal:
+      status: DENIED
+      action: REDIRECT
+      error: access_denied
+      errorDescription: "Resource owner declined consent."
+      redirectUrl: "${config.redirectUri}?error=access_denied&error_description=Consent+declined&state=${data.state}"
+```
+
+In the host application:
+```java
+TerminalResult term = plan.getTerminalResult();
+if (term.isRedirect()) {
+    response.sendRedirect(term.getRedirectUrl());
+}
+```
+
+In simulation traces:
+```
+└── [TERMINAL: DENIED] consent_declined [Redirect ➔ https://client.example.com/callback?error=access_denied&state=xyz]
+```
+
+#### 2. Hard UI Dropout (`terminalResult.isUiDropout()`)
+
+When an account is suspended or a severe security rule is violated, OAuth specifications and OWASP security guidelines prohibit redirecting back to the client application. The state specifies `action: UI_DROPOUT` (or omits `redirectUrl`) and provides a terminal `schemas:` block:
+
+```yaml
+states:
+  fraud_lockout:
+    type: TERMINAL
+    schemas:
+      - screenId: fraud_blocked_screen
+        title: "Access Blocked"
+        description: "Your session was suspended due to anomalous activity. Please contact support."
+        jsonSchema:
+          type: object
+    terminal:
+      status: DENIED
+      action: UI_DROPOUT
+      error: account_locked
+      errorDescription: "Anomalous risk score detected."
+```
+
+In the host application:
+```java
+TerminalResult term = plan.getTerminalResult();
+if (term.isUiDropout()) {
+    // plan.getFrontendSteps() preserves the terminal error screen
+    FrontendStep lockoutScreen = plan.getFrontendSteps().getFirst();
+    renderTerminalErrorScreen(lockoutScreen, term.getErrorDescription());
+}
+```
+
+In simulation traces:
+```
+└── [TERMINAL: DENIED] fraud_lockout [UI Dropout: Stays in UI] (screen: fraud_blocked_screen)
+```
+
+#### 3. Flow Simulation & CI/CD Verification
+Both dropout patterns are fully traceable in `FlowSimulation`:
+```java
+FlowSimulation sim = engine.simulate(flow, context, decisions);
+
+// Assert redirect failure URL dropout
+assertThat(sim.getTerminalResult().isRedirect()).isTrue();
+assertThat(sim.getTerminalResult().getRedirectUrl()).contains("error=access_denied");
+
+// Assert hard UI dropout
+assertThat(sim.getTerminalResult().isUiDropout()).isTrue();
+assertThat(sim.getScreens()).extracting("screenId").contains("fraud_blocked_screen");
+```
+
