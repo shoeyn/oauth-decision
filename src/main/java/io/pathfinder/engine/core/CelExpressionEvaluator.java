@@ -25,6 +25,8 @@ public class CelExpressionEvaluator {
         this.compiler = CelCompilerFactory.standardCelCompilerBuilder()
                 .setStandardMacros(CelStandardMacro.STANDARD_MACROS)
                 .addVar("context", SimpleType.DYN)
+                .addVar("data", SimpleType.DYN)
+                .addVar("config", SimpleType.DYN)
                 .addVar("results", SimpleType.DYN)
                 .addVar("input", SimpleType.DYN)
                 .addVar("event", SimpleType.DYN)
@@ -69,7 +71,9 @@ public class CelExpressionEvaluator {
             });
 
             Map<String, Object> safeBindings = new HashMap<>();
-            safeBindings.put("context", normalizeNumbers(bindings.getOrDefault("context", Collections.emptyMap())));
+            safeBindings.put("context", normalizeNumbers(bindings.getOrDefault("context", bindings.getOrDefault("data", Collections.emptyMap()))));
+            safeBindings.put("data", normalizeNumbers(bindings.getOrDefault("data", bindings.getOrDefault("context", Collections.emptyMap()))));
+            safeBindings.put("config", normalizeNumbers(bindings.getOrDefault("config", Collections.emptyMap())));
             safeBindings.put("results", normalizeNumbers(bindings.getOrDefault("results", Collections.emptyMap())));
             safeBindings.put("input", normalizeNumbers(bindings.getOrDefault("input", Collections.emptyMap())));
             safeBindings.put("event", normalizeNumbers(bindings.getOrDefault("event", Collections.emptyMap())));

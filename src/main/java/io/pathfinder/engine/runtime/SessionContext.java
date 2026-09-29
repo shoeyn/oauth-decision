@@ -12,6 +12,7 @@ public class SessionContext {
     );
 
     private final Map<String, Object> data;
+    private final Map<String, Object> config;
     private final Map<String, Object> transientData;
     private final List<String> history;
     private final String currentFlowId;
@@ -21,15 +22,19 @@ public class SessionContext {
     private final Map<String, Integer> attempts;
 
     public SessionContext() {
-        this(Collections.emptyMap(), Collections.emptyMap(), Collections.emptyList(), null, Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap());
+        this(Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap(), Collections.emptyList(), null, Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap());
     }
 
     public SessionContext(Map<String, Object> data) {
-        this(data, Collections.emptyMap(), Collections.emptyList(), null, Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap());
+        this(data, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyList(), null, Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap());
+    }
+
+    public SessionContext(Map<String, Object> data, Map<String, Object> config) {
+        this(data, config, Collections.emptyMap(), Collections.emptyList(), null, Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap());
     }
 
     public SessionContext(Map<String, Object> data, Map<String, Object> transientData, List<String> history) {
-        this(data, transientData, history, null, Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap());
+        this(data, Collections.emptyMap(), transientData, history, null, Collections.emptyList(), Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap());
     }
 
     public SessionContext(
@@ -38,7 +43,7 @@ public class SessionContext {
             List<String> history,
             String currentFlowId,
             List<StackFrame> callStack) {
-        this(data, transientData, history, currentFlowId, callStack, Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap());
+        this(data, Collections.emptyMap(), transientData, history, currentFlowId, callStack, Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap());
     }
 
     public SessionContext(
@@ -48,12 +53,23 @@ public class SessionContext {
             String currentFlowId,
             List<StackFrame> callStack,
             Set<String> sensitiveKeys) {
-        this(data, transientData, history, currentFlowId, callStack, sensitiveKeys, Collections.emptyMap(), Collections.emptyMap());
+        this(data, Collections.emptyMap(), transientData, history, currentFlowId, callStack, sensitiveKeys, Collections.emptyMap(), Collections.emptyMap());
+    }
+
+    public SessionContext(
+            Map<String, Object> data,
+            Map<String, Object> config,
+            Map<String, Object> transientData,
+            List<String> history,
+            String currentFlowId,
+            List<StackFrame> callStack) {
+        this(data, config, transientData, history, currentFlowId, callStack, Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap());
     }
 
     @JsonCreator
     public SessionContext(
             @JsonProperty("data") Map<String, Object> data,
+            @JsonProperty("config") Map<String, Object> config,
             @JsonProperty("transientData") Map<String, Object> transientData,
             @JsonProperty("history") List<String> history,
             @JsonProperty("currentFlowId") String currentFlowId,
@@ -62,6 +78,7 @@ public class SessionContext {
             @JsonProperty("input") Map<String, Object> input,
             @JsonProperty("attempts") Map<String, Integer> attempts) {
         this.data = data != null ? Collections.unmodifiableMap(new LinkedHashMap<>(data)) : Collections.emptyMap();
+        this.config = config != null ? Collections.unmodifiableMap(new LinkedHashMap<>(config)) : Collections.emptyMap();
         this.transientData = transientData != null ? Collections.unmodifiableMap(new LinkedHashMap<>(transientData)) : Collections.emptyMap();
         this.history = history != null ? Collections.unmodifiableList(new ArrayList<>(history)) : Collections.emptyList();
         this.currentFlowId = currentFlowId;
@@ -85,6 +102,10 @@ public class SessionContext {
 
     public Map<String, Object> getData() {
         return data;
+    }
+
+    public Map<String, Object> getConfig() {
+        return config;
     }
 
     public Map<String, Object> getTransientData() {
@@ -146,14 +167,14 @@ public class SessionContext {
         if (key == null) return this;
         Set<String> copy = new HashSet<>(this.sensitiveKeys);
         copy.add(key);
-        return new SessionContext(this.data, this.transientData, this.history, this.currentFlowId, this.callStack, copy, this.input, this.attempts);
+        return new SessionContext(this.data, this.config, this.transientData, this.history, this.currentFlowId, this.callStack, copy, this.input, this.attempts);
     }
 
     public SessionContext withSensitiveKeys(Collection<String> keys) {
         if (keys == null || keys.isEmpty()) return this;
         Set<String> copy = new HashSet<>(this.sensitiveKeys);
         copy.addAll(keys);
-        return new SessionContext(this.data, this.transientData, this.history, this.currentFlowId, this.callStack, copy, this.input, this.attempts);
+        return new SessionContext(this.data, this.config, this.transientData, this.history, this.currentFlowId, this.callStack, copy, this.input, this.attempts);
     }
 
     public SessionContext without(String... keys) {
@@ -165,7 +186,7 @@ public class SessionContext {
         if (keys == null || keys.isEmpty()) return this;
         Map<String, Object> copy = new LinkedHashMap<>(this.data);
         keys.forEach(copy::remove);
-        return new SessionContext(copy, this.transientData, this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
+        return new SessionContext(copy, this.config, this.transientData, this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
     }
 
     /**
@@ -191,7 +212,7 @@ public class SessionContext {
         if (isDefaultSensitive(key)) {
             sensitive.add(key);
         }
-        return new SessionContext(copy, this.transientData, this.history, this.currentFlowId, this.callStack, sensitive, this.input, this.attempts);
+        return new SessionContext(copy, this.config, this.transientData, this.history, this.currentFlowId, this.callStack, sensitive, this.input, this.attempts);
     }
 
     public SessionContext withAll(Map<String, Object> additional) {
@@ -206,7 +227,18 @@ public class SessionContext {
                 sensitive.add(k);
             }
         }
-        return new SessionContext(copy, this.transientData, this.history, this.currentFlowId, this.callStack, sensitive, this.input, this.attempts);
+        return new SessionContext(copy, this.config, this.transientData, this.history, this.currentFlowId, this.callStack, sensitive, this.input, this.attempts);
+    }
+
+    public SessionContext withConfig(Map<String, Object> newConfig) {
+        Map<String, Object> copy = newConfig != null ? new LinkedHashMap<>(newConfig) : Collections.emptyMap();
+        return new SessionContext(this.data, copy, this.transientData, this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
+    }
+
+    public SessionContext withConfigValue(String key, Object value) {
+        Map<String, Object> copy = new LinkedHashMap<>(this.config);
+        copy.put(key, value);
+        return new SessionContext(this.data, copy, this.transientData, this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
     }
 
     public SessionContext withInput(Map<String, Object> inputPayload) {
@@ -217,7 +249,7 @@ public class SessionContext {
                 sensitive.add(k);
             }
         }
-        return new SessionContext(this.data, this.transientData, this.history, this.currentFlowId, this.callStack, sensitive, newInput, this.attempts);
+        return new SessionContext(this.data, this.config, this.transientData, this.history, this.currentFlowId, this.callStack, sensitive, newInput, this.attempts);
     }
 
     public SessionContext withIncrementedAttempt(String stateId) {
@@ -226,7 +258,7 @@ public class SessionContext {
         }
         Map<String, Integer> newAttempts = new LinkedHashMap<>(this.attempts);
         newAttempts.put(stateId, newAttempts.getOrDefault(stateId, 0) + 1);
-        return new SessionContext(this.data, this.transientData, this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, newAttempts);
+        return new SessionContext(this.data, this.config, this.transientData, this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, newAttempts);
     }
 
     public SessionContext withResetAttempts(String stateId) {
@@ -235,30 +267,30 @@ public class SessionContext {
         }
         Map<String, Integer> newAttempts = new LinkedHashMap<>(this.attempts);
         newAttempts.remove(stateId);
-        return new SessionContext(this.data, this.transientData, this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, newAttempts);
+        return new SessionContext(this.data, this.config, this.transientData, this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, newAttempts);
     }
 
     public SessionContext withTransient(String key, Object value) {
         Map<String, Object> copy = new LinkedHashMap<>(this.transientData);
         copy.put(key, value);
-        return new SessionContext(this.data, copy, this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
+        return new SessionContext(this.data, this.config, copy, this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
     }
 
     public SessionContext withBreadcrumb(String stateId) {
         List<String> copy = new ArrayList<>(this.history);
         copy.add(stateId);
-        return new SessionContext(this.data, this.transientData, copy, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
+        return new SessionContext(this.data, this.config, this.transientData, copy, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
     }
 
     public SessionContext withCurrentFlowId(String flowId) {
-        return new SessionContext(this.data, this.transientData, this.history, flowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
+        return new SessionContext(this.data, this.config, this.transientData, this.history, flowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
     }
 
     public SessionContext withPushedFrame(StackFrame frame) {
         Objects.requireNonNull(frame, "frame must not be null");
         List<StackFrame> newStack = new ArrayList<>(this.callStack);
         newStack.add(frame);
-        return new SessionContext(this.data, this.transientData, this.history, this.currentFlowId, newStack, this.sensitiveKeys, this.input, this.attempts);
+        return new SessionContext(this.data, this.config, this.transientData, this.history, this.currentFlowId, newStack, this.sensitiveKeys, this.input, this.attempts);
     }
 
     public SessionContext withPoppedFrame() {
@@ -267,17 +299,18 @@ public class SessionContext {
         }
         List<StackFrame> newStack = new ArrayList<>(this.callStack);
         newStack.remove(newStack.size() - 1);
-        return new SessionContext(this.data, this.transientData, this.history, this.currentFlowId, newStack, this.sensitiveKeys, this.input, this.attempts);
+        return new SessionContext(this.data, this.config, this.transientData, this.history, this.currentFlowId, newStack, this.sensitiveKeys, this.input, this.attempts);
     }
 
     public SessionContext clearTransient() {
-        return new SessionContext(this.data, Collections.emptyMap(), this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
+        return new SessionContext(this.data, this.config, Collections.emptyMap(), this.history, this.currentFlowId, this.callStack, this.sensitiveKeys, this.input, this.attempts);
     }
 
     @Override
     public String toString() {
         return "SessionContext{" +
                 "data=" + toSafeMap() +
+                ", config=" + config +
                 ", input=" + input +
                 ", attempts=" + attempts +
                 ", history=" + history +

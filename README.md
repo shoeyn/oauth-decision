@@ -367,6 +367,61 @@ if ("SUCCESS".equals(outcome.getStatus())) {
 
 ---
 
+## Flow Simulation & Trajectory Projection
+
+Pathfinder allows callers to project what an entire execution flow will look like before running it in production, determined by passed-in **session data**, **client configuration**, and **mock decisions**:
+
+```java
+// 1. Configure session data and client configuration
+SessionContext context = new SessionContext(
+    Map.of("username", "alice", "riskScore", 15),       // data
+    Map.of("clientId", "banking-portal", "requireMfa", true) // config
+);
+
+// 2. Supply decisions for interactive steps and backend commands
+Map<String, Object> decisions = Map.of(
+    "fetch_user_profile", Map.of("name", "Alice", "status", "ACTIVE"),
+    "otp_entry_screen", Map.of("otpCode", "123456"),
+    "verify_code", Map.of("valid", true)
+);
+
+// 3. Project the entire flow
+FlowSimulation sim = engine.simulate("oauth-stepup-auth", context, decisions);
+
+// 4. Inspect trajectory
+System.out.println("Execution path: " + sim.getExecutionPath());
+System.out.println("Screens shown:  " + sim.getAllScreens());
+System.out.println("Commands run:   " + sim.getAllCommands());
+System.out.println("Terminal claims: " + sim.getTerminalResult().getClaims());
+
+// 5. Generate formatted ASCII trace
+System.out.println(sim.toVisualTrace());
+```
+
+Sample Visual Trace Output:
+```text
+=== Flow Simulation Trace: oauth-stepup-auth ===
+[1] State: evaluate_auth (BACKEND)
+    Commands (2):
+      • fetch_user_profile (service: user-directory)
+      • check_device_risk (service: fraud-engine)
+    Transition ➔ trigger_stepup_mfa
+[2] State: trigger_stepup_mfa (COMPOSITE)
+    Commands (1):
+      • send_otp_sms (service: notification-service)
+    Screens (1):
+      • otp_entry_screen ("Two-Factor Verification Required")
+    Transition ➔ verify_otp
+[3] State: verify_otp (BACKEND)
+    Commands (1):
+      • verify_code (service: otp-service)
+    Transition ➔ issue_stepup_token
+[4] State: issue_stepup_token (TERMINAL)
+[Outcome] SUCCESS Claims: {sub=user_alice, acr=urn:pathfinder:auth:level2, amr=[pwd, otp]}
+```
+
+---
+
 ## Stateless Session Persistence & Security
 
 ### 1. Redis / Cookie JSON Roundtripping
@@ -406,7 +461,7 @@ The engine protects passwords, OTP codes, and client secrets from leaking to log
 ## Enterprise Integrations
 
 * **[Spring Security OAuth 2.1 Integration Guide](docs/SPRING_SECURITY_INTEGRATION_GUIDE.md)**: Production-grade guide for integrating with Spring Boot 4 / Spring Security 7 (PAR, DPoP, JARM, Redis session, and Rails IdP).
-* **[Architecture & Extension Points](docs/ARCHITECTURE_AND_EXTENSION_POINTS.md)**: Deep dive into the `CommandRegistry`, `FlowStateRepository`, and expression engine.
+* **[Architecture & Extension Points](docs/ARCHITECTURE_AND_EXTENSION_POINTS.md)**: Deep dive into the decision engine, data and config separation, and simulation engine.
 
 ---
 

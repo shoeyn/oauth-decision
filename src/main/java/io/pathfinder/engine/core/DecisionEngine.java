@@ -149,6 +149,8 @@ public class DecisionEngine {
         // 4. Build evaluation bindings
         Map<String, Object> bindings = new HashMap<>();
         bindings.put("context", activeContext.getData());
+        bindings.put("data", activeContext.getData());
+        bindings.put("config", activeContext.getConfig());
         bindings.put("event", activeEvent.getPayload());
         if (Event.TYPE_RESUME.equalsIgnoreCase(activeEvent.getType())) {
             bindings.put("results", activeEvent.getPayload());
@@ -173,6 +175,7 @@ public class DecisionEngine {
                     throw new IllegalStateException("Transition target state does not exist: " + matched.getTarget());
                 }
                 bindings.put("context", activeContext.getData());
+                bindings.put("data", activeContext.getData());
             }
         }
 
@@ -207,6 +210,7 @@ public class DecisionEngine {
                 activeContext = activeContext.withBreadcrumb(currentStateId);
                 currentState = activeFlow.getState(currentStateId);
                 bindings.put("context", activeContext.getData());
+                bindings.put("data", activeContext.getData());
                 continue;
             }
 
@@ -253,6 +257,7 @@ public class DecisionEngine {
                         activeContext = activeContext.withBreadcrumb(currentStateId);
                         currentState = activeFlow.getState(currentStateId);
                         bindings.put("context", activeContext.getData());
+                        bindings.put("data", activeContext.getData());
                         continue;
                     } else {
                         planBuilder.checkpoint(new Checkpoint(activeFlow.getId(), currentStateId, List.of("unmatched_subflow_transition")));
@@ -305,6 +310,7 @@ public class DecisionEngine {
                 activeContext = activeContext.withBreadcrumb(currentStateId);
                 currentState = activeFlow.getState(currentStateId);
                 bindings.put("context", activeContext.getData());
+                bindings.put("data", activeContext.getData());
             } else {
                 planBuilder.checkpoint(new Checkpoint(activeFlow.getId(), currentStateId, List.of("unmatched_transition")));
                 break;
@@ -312,6 +318,324 @@ public class DecisionEngine {
         }
 
         return planBuilder.updatedContext(activeContext).build();
+    }
+
+    /**
+     * Simulates the complete execution trajectory of a flow from start to finish given initial context
+     * (data and client configuration) and a set of mock decisions (command results and user inputs).
+     *
+     * @param flowId Registered flow ID
+     * @param initialContext Initial session data and client configuration
+     * @param decisions Mock decisions/outcomes keyed by command ID, screen ID, state ID, or 'results'/'input' maps
+     * @return Full flow simulation result with execution path, all emitted commands/screens, and visual trace
+     */
+    public FlowSimulation simulate(String flowId, SessionContext initialContext, Map<String, Object> decisions) {
+        FlowDefinition flow = flowRegistry.getFlow(flowId)
+                .orElseThrow(() -> new IllegalArgumentException("Flow not found in registry: " + flowId));
+        return simulate(flow, initialContext, decisions);
+    }
+
+    /**
+     * Simulates the complete execution trajectory of a flow from start to finish given initial context
+     * (data and client configuration) and a set of mock decisions (command results and user inputs).
+     *
+     * @param flow Flow definition to simulate
+     * @param initialContext Initial session data and client configuration
+     * @param decisions Mock decisions/outcomes keyed by command ID, screen ID, state ID, or 'results'/'input' maps
+     * @return Full flow simulation result with execution path, all emitted commands/screens, and visual trace
+     */
+    public FlowSimulation simulate(FlowDefinition flow, SessionContext initialContext, Map<String, Object> decisions) {
+        if (flow == null && (initialContext == null || initialContext.getCurrentFlowId() == null)) {
+            throw new IllegalArgumentException("flow must not be null");
+        }
+        if (flow != null) {
+            flowRegistry.register(flow);
+        }
+
+        SessionContext activeContext = initialContext != null ? initialContext : new SessionContext();
+        FlowDefinition rootFlow = flow;
+        if (rootFlow == null && activeContext.getCurrentFlowId() != null) {
+            rootFlow = flowRegistry.getFlow(activeContext.getCurrentFlowId()).orElse(null);
+        }
+        if (rootFlow == null) {
+            throw new IllegalStateException("Active flow could not be resolved");
+        }
+
+        FlowDefinition activeFlow = rootFlow;
+        Map<String, Object> mockDecisions = decisions != null ? decisions : Collections.emptyMap();
+        List<SimulationStep> recordedSteps = new ArrayList<>();
+        int maxSteps = 100;
+        int stepNumber = 0;
+
+        String currentStateId = activeFlow.getInitialState();
+        activeContext = activeContext.withCurrentFlowId(activeFlow.getId()).withBreadcrumb(currentStateId);
+
+        Map<String, Object> accumulatedResults = new LinkedHashMap<>();
+        Map<String, Object> accumulatedInput = new LinkedHashMap<>(activeContext.getInput());
+
+        if (mockDecisions.get("results") instanceof Map<?, ?> resMap) {
+            resMap.forEach((k, v) -> accumulatedResults.put(String.valueOf(k), v));
+        }
+        if (mockDecisions.get("input") instanceof Map<?, ?> inMap) {
+            inMap.forEach((k, v) -> accumulatedInput.put(String.valueOf(k), v));
+        }
+
+        TerminalResult terminalResult = null;
+        Checkpoint pausedCheckpoint = null;
+
+        while (currentStateId != null && stepNumber < maxSteps) {
+            stepNumber++;
+            StateDefinition currentState = activeFlow.getState(currentStateId);
+            if (currentState == null) {
+                throw new IllegalStateException("Unknown state in flow '" + activeFlow.getId() + "': " + currentStateId);
+            }
+
+            Map<String, Object> bindings = new HashMap<>();
+            bindings.put("context", activeContext.getData());
+            bindings.put("data", activeContext.getData());
+            bindings.put("config", activeContext.getConfig());
+            bindings.put("results", accumulatedResults);
+            bindings.put("input", accumulatedInput);
+            bindings.put("event", Collections.emptyMap());
+
+            // Handle SUBFLOW delegation
+            if (currentState.getType() == StateType.SUBFLOW) {
+                String subflowId = currentState.getSubflow();
+                if (subflowId == null || subflowId.isBlank()) {
+                    throw new IllegalStateException("State '" + currentStateId + "' of type SUBFLOW must specify a 'subflow' identifier");
+                }
+                FlowDefinition childFlow = flowRegistry.getFlow(subflowId)
+                        .orElseThrow(() -> new IllegalStateException("Subflow '" + subflowId + "' not found in registry: " + subflowId));
+
+                recordedSteps.add(new SimulationStep(
+                        stepNumber,
+                        currentStateId,
+                        currentState.getType().name(),
+                        Collections.emptyList(),
+                        Collections.emptyList(),
+                        "subflow:" + subflowId,
+                        activeContext.getData()
+                ));
+
+                activeContext = activeContext.withPushedFrame(new StackFrame(activeFlow.getId(), currentStateId));
+                activeFlow = childFlow;
+                activeContext = activeContext.withCurrentFlowId(activeFlow.getId());
+                currentStateId = activeFlow.getInitialState();
+                activeContext = activeContext.withBreadcrumb(currentStateId);
+                continue;
+            }
+
+            // Resolve backend commands for this state
+            List<BackendStep> backendSteps = new ArrayList<>();
+            for (CommandDefinition cmd : currentState.getBackendCommands()) {
+                Map<String, Object> resolvedPayload = celEvaluator.resolveTemplateMap(cmd.getPayload(), bindings);
+                backendSteps.add(new BackendStep(cmd.getId(), cmd.getService(), resolvedPayload));
+
+                if (mockDecisions.containsKey(cmd.getId())) {
+                    accumulatedResults.put(cmd.getId(), mockDecisions.get(cmd.getId()));
+                }
+            }
+
+            // Resolve frontend screens for this state
+            List<FrontendStep> frontendSteps = new ArrayList<>();
+            for (FrontendSchemaDefinition schemaDef : currentState.getFrontendSchemas()) {
+                frontendSteps.add(new FrontendStep(
+                        schemaDef.getScreenId(),
+                        schemaDef.getTitle(),
+                        schemaDef.getDescription(),
+                        schemaDef.getJsonSchema(),
+                        schemaDef.getUiSchema(),
+                        Collections.emptyList()
+                ));
+
+                if (mockDecisions.containsKey(schemaDef.getScreenId())) {
+                    Object screenInput = mockDecisions.get(schemaDef.getScreenId());
+                    if (screenInput instanceof Map<?, ?> m) {
+                        m.forEach((k, v) -> accumulatedInput.put(String.valueOf(k), v));
+                    } else {
+                        accumulatedInput.put(schemaDef.getScreenId(), screenInput);
+                    }
+                }
+
+                Set<String> declared = extractDeclaredProperties(List.of(schemaDef));
+                for (String prop : declared) {
+                    if (mockDecisions.containsKey(prop)) {
+                        accumulatedInput.put(prop, mockDecisions.get(prop));
+                    }
+                }
+            }
+
+            if (mockDecisions.containsKey(currentStateId)) {
+                Object stateDecision = mockDecisions.get(currentStateId);
+                if (stateDecision instanceof Map<?, ?> m) {
+                    m.forEach((k, v) -> {
+                        accumulatedInput.put(String.valueOf(k), v);
+                        accumulatedResults.put(String.valueOf(k), v);
+                    });
+                } else {
+                    accumulatedResults.put(currentStateId, stateDecision);
+                }
+            }
+
+            bindings.put("results", accumulatedResults);
+            bindings.put("input", accumulatedInput);
+
+            // Merge declared schema properties from input into activeContext data
+            if (!frontendSteps.isEmpty()) {
+                Set<String> declaredProperties = extractDeclaredProperties(currentState.getFrontendSchemas());
+                Map<String, Object> safeUpdates = new LinkedHashMap<>();
+                for (Map.Entry<String, Object> entry : accumulatedInput.entrySet()) {
+                    String key = entry.getKey();
+                    if (declaredProperties.isEmpty() || declaredProperties.contains(key)) {
+                        if (!activeContext.getData().containsKey(key)) {
+                            safeUpdates.put(key, entry.getValue());
+                        }
+                    }
+                }
+                if (!safeUpdates.isEmpty()) {
+                    activeContext = activeContext.withAll(safeUpdates);
+                    bindings.put("context", activeContext.getData());
+                    bindings.put("data", activeContext.getData());
+                }
+            }
+
+            // Check if TERMINAL
+            if (currentState.getType() == StateType.TERMINAL || currentState.getTerminalConfig() != null) {
+                TerminalConfig tc = currentState.getTerminalConfig() != null
+                        ? currentState.getTerminalConfig()
+                        : new TerminalConfig("SUCCESS", Collections.emptyMap(), null);
+
+                Map<String, Object> resolvedClaims = celEvaluator.resolveTemplateMap(tc.getClaims(), bindings);
+
+                if (activeContext.hasCallStack()) {
+                    recordedSteps.add(new SimulationStep(
+                            stepNumber,
+                            currentStateId,
+                            "TERMINAL",
+                            backendSteps,
+                            frontendSteps,
+                            "return_to_parent",
+                            activeContext.getData()
+                    ));
+
+                    StackFrame frame = activeContext.peekFrame();
+                    activeContext = activeContext.withPoppedFrame();
+
+                    FlowDefinition parentFlow = flowRegistry.getFlow(frame.getFlowId())
+                            .orElseThrow(() -> new IllegalStateException("Parent flow not found in registry: " + frame.getFlowId()));
+                    StateDefinition parentState = parentFlow.getState(frame.getReturnStateId());
+
+                    activeFlow = parentFlow;
+                    activeContext = activeContext.withCurrentFlowId(activeFlow.getId());
+                    currentStateId = parentState.getId();
+
+                    Map<String, Object> subflowResult = new LinkedHashMap<>();
+                    subflowResult.put("status", tc.getStatus());
+                    subflowResult.put("claims", resolvedClaims);
+                    if (tc.getError() != null) {
+                        subflowResult.put("error", tc.getError());
+                    }
+                    bindings.put("subflow", subflowResult);
+                    bindings.put("outcome", tc.getStatus());
+                    accumulatedResults.put("subflow", subflowResult);
+                    bindings.put("results", accumulatedResults);
+
+                    TransitionDefinition nextTransition = findMatchingSubflowTransition(parentState, tc.getStatus(), bindings);
+                    if (nextTransition != null) {
+                        activeContext = applyContextUpdates(activeContext, nextTransition.getContextUpdates(), bindings);
+                        currentStateId = nextTransition.getTarget();
+                        activeContext = activeContext.withBreadcrumb(currentStateId);
+                        continue;
+                    } else {
+                        pausedCheckpoint = new Checkpoint(activeFlow.getId(), currentStateId, List.of("unmatched_subflow_transition"));
+                        break;
+                    }
+                } else {
+                    terminalResult = new TerminalResult(tc.getStatus(), resolvedClaims, tc.getError());
+                    recordedSteps.add(new SimulationStep(
+                            stepNumber,
+                            currentStateId,
+                            "TERMINAL",
+                            backendSteps,
+                            frontendSteps,
+                            null,
+                            activeContext.getData()
+                    ));
+                    break;
+                }
+            }
+
+            boolean hasFrontend = !currentState.getFrontendSchemas().isEmpty();
+            boolean hasBackend = !currentState.getBackendCommands().isEmpty();
+            boolean requiresPendingResults = transitionsRequireResults(currentState);
+
+            if (hasFrontend && !hasProvidedInput(currentState, mockDecisions, accumulatedInput)) {
+                recordedSteps.add(new SimulationStep(
+                        stepNumber,
+                        currentStateId,
+                        currentState.getType().name(),
+                        backendSteps,
+                        frontendSteps,
+                        null,
+                        activeContext.getData()
+                ));
+                pausedCheckpoint = new Checkpoint(activeFlow.getId(), currentStateId, List.of("input"));
+                break;
+            }
+
+            if (requiresPendingResults && !hasRequiredResults(currentState, accumulatedResults)) {
+                recordedSteps.add(new SimulationStep(
+                        stepNumber,
+                        currentStateId,
+                        currentState.getType().name(),
+                        backendSteps,
+                        frontendSteps,
+                        null,
+                        activeContext.getData()
+                ));
+                pausedCheckpoint = new Checkpoint(activeFlow.getId(), currentStateId, List.of("results"));
+                break;
+            }
+
+            Event simEvent = Event.start();
+            if (hasFrontend) {
+                simEvent = Event.submit(accumulatedInput);
+            } else if (hasBackend) {
+                simEvent = Event.resume(accumulatedResults);
+            }
+
+            TransitionDefinition nextTransition = findMatchingTransition(currentState, simEvent, bindings);
+            if (nextTransition != null) {
+                recordedSteps.add(new SimulationStep(
+                        stepNumber,
+                        currentStateId,
+                        currentState.getType().name(),
+                        backendSteps,
+                        frontendSteps,
+                        nextTransition.getTarget(),
+                        activeContext.getData()
+                ));
+
+                activeContext = applyContextUpdates(activeContext, nextTransition.getContextUpdates(), bindings);
+                currentStateId = nextTransition.getTarget();
+                activeContext = activeContext.withBreadcrumb(currentStateId);
+            } else {
+                recordedSteps.add(new SimulationStep(
+                        stepNumber,
+                        currentStateId,
+                        currentState.getType().name(),
+                        backendSteps,
+                        frontendSteps,
+                        null,
+                        activeContext.getData()
+                ));
+                pausedCheckpoint = new Checkpoint(activeFlow.getId(), currentStateId, List.of("unmatched_transition"));
+                break;
+            }
+        }
+
+        boolean completed = terminalResult != null;
+        return new FlowSimulation(rootFlow.getId(), recordedSteps, activeContext, terminalResult, pausedCheckpoint, completed);
     }
 
     private TransitionDefinition findMatchingSubflowTransition(
@@ -419,5 +743,40 @@ public class DecisionEngine {
             }
         }
         return declared;
+    }
+
+    private boolean hasProvidedInput(StateDefinition state, Map<String, Object> decisions, Map<String, Object> accumulatedInput) {
+        if (decisions.containsKey(state.getId()) || decisions.containsKey("input")) {
+            return true;
+        }
+        for (FrontendSchemaDefinition schema : state.getFrontendSchemas()) {
+            if (decisions.containsKey(schema.getScreenId()) || accumulatedInput.containsKey(schema.getScreenId())) {
+                return true;
+            }
+            if (schema.getJsonSchema() != null && schema.getJsonSchema().has("properties")) {
+                tools.jackson.databind.JsonNode props = schema.getJsonSchema().get("properties");
+                if (props != null && props.isObject()) {
+                    for (String propName : props.propertyNames()) {
+                        if (accumulatedInput.containsKey(propName) || decisions.containsKey(propName)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean hasRequiredResults(StateDefinition state, Map<String, Object> accumulatedResults) {
+        for (TransitionDefinition t : state.getTransitions()) {
+            if (t.getCondition() != null && t.getCondition().contains("results.")) {
+                for (CommandDefinition cmd : state.getBackendCommands()) {
+                    if (t.getCondition().contains("results." + cmd.getId()) && !accumulatedResults.containsKey(cmd.getId())) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
     }
 }
