@@ -43,7 +43,59 @@ Pathfinder is a pure, domain-agnostic step compiler and decision engine. It has 
 
 ---
 
-## 2. Core Capabilities
+## 2. Package Architecture (Two Functional Domains)
+
+The codebase is organized into two intuitive vertical functional domains:
+
+```
+io.pathfinder.engine
+│
+├── flow/                           ← Everything related to the FLOW BLUEPRINT
+│   │
+│   ├── model/                      ← Static YAML state-machine definition (AST)
+│   │   ├── FlowDefinition.java
+│   │   ├── StateDefinition.java
+│   │   ├── TransitionDefinition.java
+│   │   ├── CommandDefinition.java
+│   │   ├── FrontendSchemaDefinition.java
+│   │   ├── TerminalConfig.java
+│   │   └── StateType.java
+│   │
+│   ├── parser/                     ← YAML/JSON parsing, syntax validation & includes
+│   │   └── FlowParser.java
+│   │
+│   └── registry/                   ← Flow storage & discovery (Classpath, FileSystem, InMemory)
+│       ├── FlowRegistry.java
+│       ├── ClasspathFlowRegistry.java
+│       ├── FileSystemFlowRegistry.java
+│       └── InMemoryFlowRegistry.java
+│
+└── execution/                      ← Everything related to RUNNING & EVALUATING flows
+    │
+    ├── DecisionEngine.java         ← Central engine orchestrator (at the root of execution)
+    │
+    ├── state/                      ← Session data, checkpoints, emitted steps & events
+    │   ├── SessionContext.java
+    │   ├── ExecutionPlan.java
+    │   ├── Checkpoint.java
+    │   ├── TerminalResult.java
+    │   ├── BackendStep.java
+    │   ├── FrontendStep.java
+    │   ├── Event.java
+    │   └── StackFrame.java
+    │
+    ├── eval/                       ← Google CEL evaluation & JSON Schema input validation
+    │   ├── CelExpressionEvaluator.java
+    │   └── JsonSchemaInputValidator.java
+    │
+    └── simulation/                 ← Trajectory projection, mock decisions & visual tracing
+        ├── FlowSimulation.java
+        └── SimulationStep.java
+```
+
+---
+
+## 3. Core Capabilities
 
 ### A. Data & Client Configuration Separation
 

@@ -364,6 +364,10 @@ if (term.isUiDropout()) {
 ## Java Host Integration
 
 ```java
+import io.pathfinder.engine.execution.DecisionEngine;
+import io.pathfinder.engine.execution.state.*;
+import io.pathfinder.engine.flow.registry.*;
+
 // 1. Initialize Flow Registry and Decision Engine
 FlowRegistry registry = new ClasspathFlowRegistry()
         .withResource("/flows/main_login_flow.yaml")
@@ -516,7 +520,7 @@ Subflow Visual Trace Output:
 ## Stateless Session Persistence & Security
 
 ### 1. Redis / Cookie JSON Roundtripping & Cross-Service Resilience
-OAuth servers run over stateless HTTP. All runtime models ([SessionContext](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/SessionContext.java), [Checkpoint](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/Checkpoint.java), [ExecutionPlan](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/ExecutionPlan.java), [FrontendStep](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/runtime/FrontendStep.java)) feature complete Jackson `@JsonCreator`, `@JsonProperty`, and `@JsonIgnoreProperties(ignoreUnknown = true)` decorators, allowing safe interoperability across Spring Boot, Rails, and Redis DB 0:
+OAuth servers run over stateless HTTP. All runtime models ([SessionContext](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/execution/state/SessionContext.java), [Checkpoint](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/execution/state/Checkpoint.java), [ExecutionPlan](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/execution/state/ExecutionPlan.java), [FrontendStep](file:///Users/nathanshoemark/Pathfinder/src/main/java/io/pathfinder/engine/execution/state/FrontendStep.java)) feature complete Jackson `@JsonCreator`, `@JsonProperty`, and `@JsonIgnoreProperties(ignoreUnknown = true)` decorators, allowing safe interoperability across Spring Boot, Rails, and Redis DB 0:
 
 ```java
 // Fluent builder with clean separation of data, config, and transient attributes:

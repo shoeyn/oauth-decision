@@ -98,12 +98,12 @@ sequenceDiagram
 
 | Component | Class | Description |
 |---|---|---|
-| **Decision Engine** | `io.pathfinder.engine.core.DecisionEngine` | Pure functional look-ahead compiler evaluating state charts and CEL conditions. |
-| **Session Context** | `io.pathfinder.engine.runtime.SessionContext` | Immutable snapshot of runtime user `data`, client `config`, transient attributes, and execution call stack. |
-| **Flow Simulation** | `io.pathfinder.engine.runtime.FlowSimulation` | Full trajectory path projection tool (`engine.simulate(flow, context, decisions)`). |
+| **Decision Engine** | `io.pathfinder.engine.execution.DecisionEngine` | Pure functional look-ahead compiler evaluating state charts and CEL conditions. |
+| **Session Context** | `io.pathfinder.engine.execution.state.SessionContext` | Immutable snapshot of runtime user `data`, client `config`, transient attributes, and execution call stack. |
+| **Flow Simulation** | `io.pathfinder.engine.execution.simulation.FlowSimulation` | Full trajectory path projection tool (`engine.simulate(flow, context, decisions)`). |
 | **Safe Input Scoping** | `DecisionEngine` | Automatically prevents Mass Assignment (CWE-915) by verifying declared JSON Schema properties. |
 | **Attempt Limiting** | `StateDefinition.getMaxAttempts()` | Built-in brute-force protection with configurable `onError` fallback transitions. |
-| **Flow Registry** | `io.pathfinder.engine.registry.FlowRegistry` | Pluggable flow discovery via `ClasspathFlowRegistry` or `FileSystemFlowRegistry`. |
+| **Flow Registry** | `io.pathfinder.engine.flow.registry.FlowRegistry` | Pluggable flow discovery via `ClasspathFlowRegistry` or `FileSystemFlowRegistry`. |
 
 ---
 
@@ -130,9 +130,9 @@ Create `com.example.authserver.config.PathfinderConfig`:
 ```java
 package com.example.authserver.config;
 
-import io.pathfinder.engine.core.DecisionEngine;
-import io.pathfinder.engine.registry.ClasspathFlowRegistry;
-import io.pathfinder.engine.registry.FlowRegistry;
+import io.pathfinder.engine.execution.DecisionEngine;
+import io.pathfinder.engine.flow.registry.ClasspathFlowRegistry;
+import io.pathfinder.engine.flow.registry.FlowRegistry;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -163,7 +163,7 @@ Pathfinder emits pure `BackendStep` descriptors containing `service` and `payloa
 ```java
 package com.example.authserver.service;
 
-import io.pathfinder.engine.runtime.BackendStep;
+import io.pathfinder.engine.execution.state.BackendStep;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -211,8 +211,8 @@ Create a Spring Security filter or endpoint to enforce Pathfinder workflows befo
 package com.example.authserver.security;
 
 import com.example.authserver.service.StepExecutionService;
-import io.pathfinder.engine.core.DecisionEngine;
-import io.pathfinder.engine.runtime.*;
+import io.pathfinder.engine.execution.DecisionEngine;
+import io.pathfinder.engine.execution.state.*;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
